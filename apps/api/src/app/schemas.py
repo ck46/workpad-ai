@@ -47,6 +47,7 @@ class ConversationSummary(BaseModel):
     updated_at: datetime
     last_message_preview: str | None = None
     artifact_count: int = 0
+    archived_at: datetime | None = None
 
 
 class ConversationDetail(BaseModel):

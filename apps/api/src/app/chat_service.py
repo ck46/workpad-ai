@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -145,11 +146,111 @@ def _as_dict(item: Any) -> dict[str, Any]:
     return dict(item)
 
 
+_JSON_STRING_PATTERN = r'"((?:\\.|[^"\\])*)"'
+_TITLE_REGEX = re.compile(r'"title"\s*:\s*' + _JSON_STRING_PATTERN)
+_CONTENT_TYPE_REGEX = re.compile(r'"content_type"\s*:\s*' + _JSON_STRING_PATTERN)
+_CONTENT_OPEN_REGEX = re.compile(r'"content"\s*:\s*"')
+_CONTENT_NULL_REGEX = re.compile(r'"content"\s*:\s*null')
+_JSON_ESCAPE_MAP = {'"': '"', "\\": "\\", "/": "/", "n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}
+
+
+class CanvasApplyStreamParser:
+    """Extracts title, content_type, and streams the `content` string from partial canvas_apply JSON args."""
+
+    def __init__(self) -> None:
+        self.accumulated: str = ""
+        self.title: str | None = None
+        self.content_type: str | None = None
+        self._content_started: bool = False
+        self._content_cursor: int = 0
+        self.content_finished: bool = False
+        self.started_emitted: bool = False
+
+    @staticmethod
+    def _decode(raw: str) -> str:
+        try:
+            return json.loads('"' + raw + '"')
+        except json.JSONDecodeError:
+            return raw
+
+    def feed(self, chunk: str) -> tuple[dict[str, str] | None, str, bool]:
+        """Returns (start_payload_or_None, content_delta, content_finished).
+
+        start_payload is returned exactly once, the first time title+content_type are known
+        AND we've observed the start of a non-null content value (i.e., there is content to stream).
+        """
+        self.accumulated += chunk
+
+        if self.title is None:
+            match = _TITLE_REGEX.search(self.accumulated)
+            if match:
+                self.title = self._decode(match.group(1))
+
+        if self.content_type is None:
+            match = _CONTENT_TYPE_REGEX.search(self.accumulated)
+            if match:
+                self.content_type = self._decode(match.group(1))
+
+        if not self._content_started and not self.content_finished:
+            open_match = _CONTENT_OPEN_REGEX.search(self.accumulated)
+            if open_match:
+                self._content_started = True
+                self._content_cursor = open_match.end()
+            elif _CONTENT_NULL_REGEX.search(self.accumulated):
+                self.content_finished = True
+
+        start_payload: dict[str, str] | None = None
+        if (
+            not self.started_emitted
+            and self.title is not None
+            and self.content_type is not None
+            and self._content_started
+        ):
+            start_payload = {"title": self.title, "content_type": self.content_type}
+            self.started_emitted = True
+
+        content_delta = ""
+        if self._content_started and not self.content_finished:
+            i = self._content_cursor
+            chars: list[str] = []
+            length = len(self.accumulated)
+            while i < length:
+                ch = self.accumulated[i]
+                if ch == "\\":
+                    if i + 1 >= length:
+                        break
+                    esc = self.accumulated[i + 1]
+                    if esc == "u":
+                        if i + 5 >= length:
+                            break
+                        try:
+                            chars.append(chr(int(self.accumulated[i + 2 : i + 6], 16)))
+                        except ValueError:
+                            chars.append("?")
+                        i += 6
+                    else:
+                        chars.append(_JSON_ESCAPE_MAP.get(esc, esc))
+                        i += 2
+                elif ch == '"':
+                    self.content_finished = True
+                    self._content_cursor = i + 1
+                    break
+                else:
+                    chars.append(ch)
+                    i += 1
+            if not self.content_finished:
+                self._content_cursor = i
+            content_delta = "".join(chars)
+
+        return start_payload, content_delta, self.content_finished
+
+
 @dataclass
 class NormalizedToolCall:
     name: str
     arguments: str
     call_id: str
+    draft_id: str | None = None
 
 
 @dataclass
@@ -212,6 +313,8 @@ class WorkpadChatService:
         tool_calls: list[NormalizedToolCall] = []
         response_id: str | None = None
         emitted_started = False
+        parsers: dict[str, CanvasApplyStreamParser] = {}
+        draft_ids: dict[str, str] = {}
 
         def iterator() -> Iterator[str]:
             nonlocal emitted_started, response_id
@@ -228,14 +331,39 @@ class WorkpadChatService:
                     delta = data.get("delta", "")
                     text_fragments.append(delta)
                     yield sse_event({"type": "assistant.message.delta", "delta": delta})
+                elif event_type == "response.function_call_arguments.delta":
+                    item_id = str(data.get("item_id", ""))
+                    if not item_id:
+                        continue
+                    delta_text = str(data.get("delta", ""))
+                    parser = parsers.setdefault(item_id, CanvasApplyStreamParser())
+                    draft_id = draft_ids.setdefault(item_id, f"stream-{uuid4()}")
+                    start_payload, content_delta, _ = parser.feed(delta_text)
+                    if start_payload is not None:
+                        yield sse_event({
+                            "type": "artifact.draft.started",
+                            "draftId": draft_id,
+                            "title": start_payload["title"],
+                            "content_type": start_payload["content_type"],
+                        })
+                    if content_delta:
+                        yield sse_event({
+                            "type": "artifact.draft.delta",
+                            "draftId": draft_id,
+                            "delta": content_delta,
+                        })
                 elif event_type == "response.output_item.done":
                     item = data.get("item", {})
                     if item.get("type") == "function_call":
+                        item_id = str(item.get("id", ""))
+                        parser = parsers.get(item_id)
+                        draft_id = draft_ids.get(item_id) if parser and parser.started_emitted else None
                         tool_calls.append(
                             NormalizedToolCall(
                                 name=item.get("name", ""),
                                 arguments=item.get("arguments", "{}"),
                                 call_id=item.get("call_id", ""),
+                                draft_id=draft_id,
                             )
                         )
                 elif event_type in {"response.failed", "error"}:
@@ -282,9 +410,11 @@ class WorkpadChatService:
         current_block: dict[str, Any] | None = None
         current_block_text: list[str] = []
         current_tool_json: list[str] = []
+        current_parser: CanvasApplyStreamParser | None = None
+        current_draft_id: str | None = None
 
         def iterator() -> Iterator[str]:
-            nonlocal emitted_started, current_block
+            nonlocal emitted_started, current_block, current_parser, current_draft_id
             for event in stream:
                 event_type = getattr(event, "type", None)
                 if event_type == "content_block_start":
@@ -292,6 +422,12 @@ class WorkpadChatService:
                     current_block = block
                     current_block_text.clear()
                     current_tool_json.clear()
+                    if block.get("type") == "tool_use" and block.get("name") == "canvas_apply":
+                        current_parser = CanvasApplyStreamParser()
+                        current_draft_id = f"stream-{uuid4()}"
+                    else:
+                        current_parser = None
+                        current_draft_id = None
                 elif event_type == "content_block_delta":
                     delta = _as_dict(getattr(event, "delta", {}))
                     delta_type = delta.get("type")
@@ -304,7 +440,23 @@ class WorkpadChatService:
                         current_block_text.append(text_piece)
                         yield sse_event({"type": "assistant.message.delta", "delta": text_piece})
                     elif delta_type == "input_json_delta":
-                        current_tool_json.append(delta.get("partial_json", ""))
+                        partial = delta.get("partial_json", "")
+                        current_tool_json.append(partial)
+                        if current_parser is not None and current_draft_id is not None:
+                            start_payload, content_delta, _ = current_parser.feed(partial)
+                            if start_payload is not None:
+                                yield sse_event({
+                                    "type": "artifact.draft.started",
+                                    "draftId": current_draft_id,
+                                    "title": start_payload["title"],
+                                    "content_type": start_payload["content_type"],
+                                })
+                            if content_delta:
+                                yield sse_event({
+                                    "type": "artifact.draft.delta",
+                                    "draftId": current_draft_id,
+                                    "delta": content_delta,
+                                })
                 elif event_type == "content_block_stop":
                     if current_block is None:
                         continue
@@ -320,8 +472,11 @@ class WorkpadChatService:
                         except json.JSONDecodeError:
                             parsed_input = {}
                         assistant_blocks.append({"type": "tool_use", "id": block_id, "name": name, "input": parsed_input})
-                        tool_calls.append(NormalizedToolCall(name=name, arguments=arguments, call_id=block_id))
+                        draft_id = current_draft_id if current_parser and current_parser.started_emitted else None
+                        tool_calls.append(NormalizedToolCall(name=name, arguments=arguments, call_id=block_id, draft_id=draft_id))
                     current_block = None
+                    current_parser = None
+                    current_draft_id = None
                 elif event_type == "error":
                     error_obj = _as_dict(getattr(event, "error", {}))
                     raise RuntimeError(error_obj.get("message") or "Anthropic request failed.")
@@ -412,6 +567,35 @@ class WorkpadChatService:
         else:
             yield from self._orchestrate_anthropic(session, conversation, payload, spec, base_input)
 
+    def _emit_artifact_commit(
+        self,
+        tool_call: NormalizedToolCall,
+        mutation: Any,
+        artifact_payload: dict[str, Any],
+    ) -> Iterator[str]:
+        if tool_call.draft_id:
+            yield sse_event({
+                "type": "artifact.draft.completed",
+                "draftId": tool_call.draft_id,
+                "artifact": artifact_payload,
+                "action": mutation.action,
+                "summary": mutation.summary,
+            })
+            return
+        yield sse_event({
+            "type": "artifact.started",
+            "artifact": artifact_payload,
+            "action": mutation.action,
+            "summary": mutation.summary,
+        })
+        for piece in chunk_text(mutation.artifact.content):
+            yield sse_event({
+                "type": "artifact.delta",
+                "artifactId": mutation.artifact.id,
+                "delta": piece,
+            })
+        yield sse_event({"type": "artifact.completed", "artifact": artifact_payload})
+
     def _orchestrate_openai(self, session, conversation, payload, spec, base_input) -> Iterator[str]:
         first_pass_stream, first_pass = self._stream_openai(spec, payload, base_input)
         for chunk in first_pass_stream:
@@ -429,10 +613,7 @@ class WorkpadChatService:
             current_artifact_id = mutation.artifact.id
             tool_summaries.append(f"{mutation.summary} Saved in the workpad as \"{mutation.artifact.title}\".")
             artifact_payload = serialize_artifact(mutation.artifact).model_dump(mode="json")
-            yield sse_event({"type": "artifact.started", "artifact": artifact_payload, "action": mutation.action, "summary": mutation.summary})
-            for piece in chunk_text(mutation.artifact.content):
-                yield sse_event({"type": "artifact.delta", "artifactId": mutation.artifact.id, "delta": piece})
-            yield sse_event({"type": "artifact.completed", "artifact": artifact_payload})
+            yield from self._emit_artifact_commit(tool_call, mutation, artifact_payload)
             tool_output_items.append(
                 {
                     "type": "function_call_output",
@@ -483,10 +664,7 @@ class WorkpadChatService:
             current_artifact_id = mutation.artifact.id
             tool_summaries.append(f"{mutation.summary} Saved in the workpad as \"{mutation.artifact.title}\".")
             artifact_payload = serialize_artifact(mutation.artifact).model_dump(mode="json")
-            yield sse_event({"type": "artifact.started", "artifact": artifact_payload, "action": mutation.action, "summary": mutation.summary})
-            for piece in chunk_text(mutation.artifact.content):
-                yield sse_event({"type": "artifact.delta", "artifactId": mutation.artifact.id, "delta": piece})
-            yield sse_event({"type": "artifact.completed", "artifact": artifact_payload})
+            yield from self._emit_artifact_commit(tool_call, mutation, artifact_payload)
             tool_results.append(
                 {
                     "type": "tool_result",

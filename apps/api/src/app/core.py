@@ -63,6 +63,7 @@ class Conversation(Base):
     title: Mapped[str] = mapped_column(String(240), default="New workpad")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
 
     messages: Mapped[list["Message"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
     artifacts: Mapped[list["Artifact"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
@@ -128,7 +129,21 @@ def get_session_factory():
 
 
 def init_db() -> None:
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    _ensure_conversation_schema(engine)
+
+
+def _ensure_conversation_schema(engine) -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        columns = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info('conversations')").fetchall()
+        }
+        if "archived_at" not in columns:
+            connection.exec_driver_sql("ALTER TABLE conversations ADD COLUMN archived_at DATETIME")
 
 
 def serialize_conversation(conversation: Conversation, session: Session) -> ConversationSummary:
@@ -148,6 +163,7 @@ def serialize_conversation(conversation: Conversation, session: Session) -> Conv
         updated_at=conversation.updated_at,
         last_message_preview=preview,
         artifact_count=int(artifact_count),
+        archived_at=conversation.archived_at,
     )
 
 
@@ -172,9 +188,38 @@ def serialize_artifact(artifact: Artifact) -> ArtifactRead:
     )
 
 
-def list_conversations(session: Session) -> list[ConversationSummary]:
-    conversations = session.scalars(select(Conversation).order_by(Conversation.updated_at.desc())).all()
+def list_conversations(session: Session, *, include_archived: bool = False) -> list[ConversationSummary]:
+    query = select(Conversation).order_by(Conversation.updated_at.desc())
+    if not include_archived:
+        query = query.where(Conversation.archived_at.is_(None))
+    conversations = session.scalars(query).all()
     return [serialize_conversation(item, session) for item in conversations]
+
+
+def archive_conversation(session: Session, conversation_id: str) -> Conversation:
+    conversation = get_conversation_or_404(session, conversation_id)
+    if conversation.archived_at is None:
+        conversation.archived_at = utcnow()
+        conversation.updated_at = utcnow()
+        session.commit()
+        session.refresh(conversation)
+    return conversation
+
+
+def unarchive_conversation(session: Session, conversation_id: str) -> Conversation:
+    conversation = get_conversation_or_404(session, conversation_id)
+    if conversation.archived_at is not None:
+        conversation.archived_at = None
+        conversation.updated_at = utcnow()
+        session.commit()
+        session.refresh(conversation)
+    return conversation
+
+
+def delete_conversation(session: Session, conversation_id: str) -> None:
+    conversation = get_conversation_or_404(session, conversation_id)
+    session.delete(conversation)
+    session.commit()
 
 
 def create_conversation(session: Session, seed_title: str | None = None) -> Conversation:

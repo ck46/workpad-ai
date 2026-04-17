@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 
 from .core import (
+    archive_conversation,
+    delete_conversation,
     export_artifact,
     get_artifact_or_404,
     get_conversation_detail,
@@ -16,6 +18,7 @@ from .core import (
     list_conversations,
     serialize_artifact,
     serialize_conversation,
+    unarchive_conversation,
     update_artifact_manually,
 )
 from .chat_service import WorkpadChatService
@@ -64,9 +67,39 @@ def list_models():
 
 
 @app.get(f"{settings.api_prefix}/conversations", response_model=list[ConversationSummary])
-def get_conversations():
+def get_conversations(include_archived: bool = False):
     with session_factory() as session:
-        return list_conversations(session)
+        return list_conversations(session, include_archived=include_archived)
+
+
+@app.post(f"{settings.api_prefix}/conversations/{{conversation_id}}/archive", response_model=ConversationSummary)
+def archive_conversation_endpoint(conversation_id: str):
+    with session_factory() as session:
+        try:
+            conversation = archive_conversation(session, conversation_id)
+            return serialize_conversation(conversation, session)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(f"{settings.api_prefix}/conversations/{{conversation_id}}/unarchive", response_model=ConversationSummary)
+def unarchive_conversation_endpoint(conversation_id: str):
+    with session_factory() as session:
+        try:
+            conversation = unarchive_conversation(session, conversation_id)
+            return serialize_conversation(conversation, session)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete(f"{settings.api_prefix}/conversations/{{conversation_id}}")
+def delete_conversation_endpoint(conversation_id: str):
+    with session_factory() as session:
+        try:
+            delete_conversation(session, conversation_id)
+            return Response(status_code=204)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post(f"{settings.api_prefix}/conversations", response_model=ConversationSummary)

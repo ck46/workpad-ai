@@ -41,6 +41,7 @@ marked.use(
 );
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
+  ArrowLeftRight,
   ArrowUp,
   Check,
   ChevronDown,
@@ -48,8 +49,12 @@ import {
   FileCode2,
   FileDown,
   LoaderCircle,
+  Archive,
+  ArchiveRestore,
   MessageSquareText,
   Moon,
+  MoreHorizontal,
+  Trash2,
   User,
   PanelLeftClose,
   PanelLeftOpen,
@@ -84,6 +89,24 @@ type CanvasMode = "edit" | "preview";
 
 const CANVAS_THEME_STORAGE_KEY = "workpad-canvas-theme";
 const CANVAS_MODE_STORAGE_KEY = "workpad-canvas-mode";
+
+const CANVAS_ON_LEFT_STORAGE_KEY = "workpad-canvas-on-left";
+
+function useCanvasOnLeft(): [boolean, () => void] {
+  const [canvasOnLeft, setCanvasOnLeft] = useState<boolean>(() => {
+    if (typeof window === "undefined") {
+      return true;
+    }
+    const stored = window.localStorage.getItem(CANVAS_ON_LEFT_STORAGE_KEY);
+    return stored === null ? true : stored === "1";
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(CANVAS_ON_LEFT_STORAGE_KEY, canvasOnLeft ? "1" : "0");
+  }, [canvasOnLeft]);
+
+  return [canvasOnLeft, () => setCanvasOnLeft((value) => !value)];
+}
 
 function useCanvasMode(): [CanvasMode, (mode: CanvasMode) => void] {
   const [mode, setMode] = useState<CanvasMode>(() => {
@@ -174,6 +197,7 @@ type ConversationSummary = {
   updated_at: string;
   last_message_preview?: string | null;
   artifact_count: number;
+  archived_at?: string | null;
 };
 
 type ConversationDetail = {
@@ -195,9 +219,14 @@ type WorkbenchStore = {
   bootstrapped: boolean;
   models: ModelInfo[];
   selectedModelId: string;
+  showArchived: boolean;
   bootstrap: () => Promise<void>;
   startNewConversation: () => Promise<void>;
   selectConversation: (conversationId: string) => Promise<void>;
+  setShowArchived: (value: boolean) => void;
+  archiveConversation: (conversationId: string) => Promise<void>;
+  unarchiveConversation: (conversationId: string) => Promise<void>;
+  deleteConversation: (conversationId: string) => Promise<void>;
   setComposer: (value: string) => void;
   setSelectedModel: (modelId: string) => void;
   setActiveArtifactContent: (content: string) => void;
@@ -405,6 +434,39 @@ function buildStreamEventHandler(
       });
     }
 
+    if (type === "artifact.draft.started" && event.draftId) {
+      const draftId = String(event.draftId);
+      const draft: Artifact = {
+        id: draftId,
+        conversation_id: get().activeConversationId ?? "",
+        title: String(event.title ?? "Drafting…"),
+        content: "",
+        content_type: (event.content_type as ContentType) ?? "markdown",
+        version: 0,
+        updated_at: new Date().toISOString(),
+        dirty: false,
+      };
+      set({ activeArtifact: draft });
+    }
+
+    if (type === "artifact.draft.delta" && event.draftId) {
+      const draftId = String(event.draftId);
+      const delta = String(event.delta ?? "");
+      const artifact = get().activeArtifact;
+      if (!artifact || artifact.id !== draftId) {
+        return;
+      }
+      set({ activeArtifact: { ...artifact, content: artifact.content + delta, dirty: false } });
+    }
+
+    if (type === "artifact.draft.completed" && event.artifact) {
+      const finalArtifact = event.artifact as Artifact;
+      set({
+        activeArtifact: { ...finalArtifact, dirty: false },
+        artifacts: updateArtifactCollection(get().artifacts, { ...finalArtifact, dirty: false }),
+      });
+    }
+
     if (type === "assistant.message.completed" && event.message) {
       const messagePayload = event.message as Message;
       set({
@@ -451,12 +513,14 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   bootstrapped: false,
   models: FALLBACK_MODELS,
   selectedModelId: loadStoredModelId(),
+  showArchived: false,
 
   async bootstrap() {
     set({ status: "loading", error: null });
     try {
+      const includeArchived = get().showArchived;
       const [conversations, models] = await Promise.all([
-        requestJson<ConversationSummary[]>("/api/conversations"),
+        requestJson<ConversationSummary[]>(`/api/conversations?include_archived=${includeArchived}`),
         requestJson<ModelInfo[]>("/api/models").catch(() => FALLBACK_MODELS),
       ]);
       const resolvedModels = models.length > 0 ? models : FALLBACK_MODELS;
@@ -518,6 +582,77 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
         status: "error",
         error: error instanceof Error ? error.message : "Could not load that conversation.",
       });
+    }
+  },
+
+  async setShowArchived(value) {
+    set({ showArchived: value });
+    try {
+      const conversations = await requestJson<ConversationSummary[]>(
+        `/api/conversations?include_archived=${value}`,
+      );
+      set({ conversations });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : "Could not load conversations." });
+    }
+  },
+
+  async archiveConversation(conversationId) {
+    try {
+      const updated = await requestJson<ConversationSummary>(
+        `/api/conversations/${conversationId}/archive`,
+        { method: "POST" },
+      );
+      const keep = get().showArchived;
+      set((state) => ({
+        conversations: keep
+          ? upsertConversation(state.conversations, updated)
+          : state.conversations.filter((item) => item.id !== conversationId),
+        activeConversationId: state.activeConversationId === conversationId && !keep ? null : state.activeConversationId,
+        messages: state.activeConversationId === conversationId && !keep ? [] : state.messages,
+        artifacts: state.activeConversationId === conversationId && !keep ? [] : state.artifacts,
+        activeArtifact: state.activeConversationId === conversationId && !keep ? null : state.activeArtifact,
+        error: null,
+      }));
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : "Could not archive conversation." });
+    }
+  },
+
+  async unarchiveConversation(conversationId) {
+    try {
+      const updated = await requestJson<ConversationSummary>(
+        `/api/conversations/${conversationId}/unarchive`,
+        { method: "POST" },
+      );
+      set((state) => ({
+        conversations: upsertConversation(state.conversations, updated),
+        error: null,
+      }));
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : "Could not unarchive conversation." });
+    }
+  },
+
+  async deleteConversation(conversationId) {
+    try {
+      const response = await fetch(`${API_BASE}/api/conversations/${conversationId}`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      set((state) => {
+        const isActive = state.activeConversationId === conversationId;
+        return {
+          conversations: state.conversations.filter((item) => item.id !== conversationId),
+          activeConversationId: isActive ? null : state.activeConversationId,
+          messages: isActive ? [] : state.messages,
+          artifacts: isActive ? [] : state.artifacts,
+          activeArtifact: isActive ? null : state.activeArtifact,
+          error: null,
+        };
+      });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : "Could not delete conversation." });
     }
   },
 
@@ -1349,7 +1484,8 @@ function WorkpadPane() {
 
   const isReadOnly = status === "streaming";
   const isMarkdownArtifact = artifact.content_type === "markdown";
-  const isPreviewing = isMarkdownArtifact && canvasMode === "preview";
+  const effectiveCanvasMode: CanvasMode = status === "streaming" ? "edit" : canvasMode;
+  const isPreviewing = isMarkdownArtifact && effectiveCanvasMode === "preview";
   const editingDisabled = isReadOnly || isPreviewing;
   const canUndo = isMarkdownArtifact
     ? Boolean(markdownEditor && markdownEditor.can().chain().focus().undo().run()) && !editingDisabled
@@ -1484,28 +1620,35 @@ function WorkpadPane() {
           </div>
           <div className="flex items-center gap-2">
             {isMarkdownArtifact ? (
-              <div className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] p-0.5 text-xs">
+              <div
+                className={`inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] p-0.5 text-xs ${
+                  isReadOnly ? "opacity-50" : ""
+                }`}
+              >
                 <button
                   type="button"
                   onClick={() => setCanvasMode("edit")}
+                  disabled={isReadOnly}
                   className={`rounded-full px-3 py-1 transition ${
-                    canvasMode === "edit"
+                    effectiveCanvasMode === "edit"
                       ? "bg-white/10 text-slate-100"
                       : "text-slate-400 hover:text-slate-200"
-                  }`}
-                  aria-pressed={canvasMode === "edit"}
+                  } disabled:cursor-not-allowed`}
+                  aria-pressed={effectiveCanvasMode === "edit"}
                 >
                   Edit
                 </button>
                 <button
                   type="button"
                   onClick={() => setCanvasMode("preview")}
+                  disabled={isReadOnly}
+                  title={isReadOnly ? "Preview disabled while streaming" : undefined}
                   className={`rounded-full px-3 py-1 transition ${
-                    canvasMode === "preview"
+                    effectiveCanvasMode === "preview"
                       ? "bg-white/10 text-slate-100"
                       : "text-slate-400 hover:text-slate-200"
-                  }`}
-                  aria-pressed={canvasMode === "preview"}
+                  } disabled:cursor-not-allowed`}
+                  aria-pressed={effectiveCanvasMode === "preview"}
                 >
                   Preview
                 </button>
@@ -1624,11 +1767,117 @@ function WorkpadPane() {
   );
 }
 
+function ConversationCard({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
+  const selectConversation = useWorkbenchStore((state) => state.selectConversation);
+  const archiveConversation = useWorkbenchStore((state) => state.archiveConversation);
+  const unarchiveConversation = useWorkbenchStore((state) => state.unarchiveConversation);
+  const deleteConversation = useWorkbenchStore((state) => state.deleteConversation);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+    function handlePointerDown(event: MouseEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [menuOpen]);
+
+  const isArchived = Boolean(conversation.archived_at);
+  const artifactCount = conversation.artifact_count;
+  const artifactLabel = `${artifactCount} ${artifactCount === 1 ? "artifact" : "artifacts"}`;
+
+  function handleDelete(event: React.MouseEvent) {
+    event.stopPropagation();
+    setMenuOpen(false);
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(`Delete "${conversation.title}"? This can't be undone.`);
+    if (!confirmed) {
+      return;
+    }
+    void deleteConversation(conversation.id);
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className={`group relative rounded-2xl border transition ${
+        active
+          ? "border-sky-300/25 bg-sky-400/10"
+          : "border-transparent hover:border-white/10 hover:bg-white/[0.04]"
+      } ${isArchived ? "opacity-70" : ""}`}
+    >
+      <button
+        type="button"
+        onClick={() => void selectConversation(conversation.id)}
+        className="block w-full rounded-2xl px-3 py-2.5 pr-9 text-left"
+      >
+        <div className="truncate text-sm font-medium text-slate-100">
+          {conversation.title}
+          {isArchived ? <span className="ml-2 text-[10px] uppercase tracking-[0.2em] text-slate-500">archived</span> : null}
+        </div>
+        <div className="mt-0.5 truncate text-xs text-slate-400">
+          {conversation.last_message_preview || "Fresh conversation"}
+        </div>
+        <div className="mt-1 text-[11px] text-slate-500">
+          {artifactLabel} · {formatTimestamp(conversation.updated_at)}
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          setMenuOpen((value) => !value);
+        }}
+        title="Conversation actions"
+        aria-label="Conversation actions"
+        className={`absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition ${
+          menuOpen ? "bg-white/10 text-slate-100 opacity-100" : "opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-slate-100"
+        }`}
+      >
+        <MoreHorizontal size={14} />
+      </button>
+      {menuOpen ? (
+        <div className="absolute right-1.5 top-10 z-20 min-w-[160px] rounded-2xl border border-white/10 bg-chrome-900/95 p-1.5 shadow-panel backdrop-blur-xl">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpen(false);
+              void (isArchived ? unarchiveConversation(conversation.id) : archiveConversation(conversation.id));
+            }}
+            className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left text-sm text-slate-100 transition hover:bg-white/10"
+          >
+            {isArchived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+            {isArchived ? "Unarchive" : "Archive"}
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left text-sm text-rose-200 transition hover:bg-rose-500/15"
+          >
+            <Trash2 size={14} />
+            Delete
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function Sidebar() {
   const conversations = useWorkbenchStore((state) => state.conversations);
   const activeConversationId = useWorkbenchStore((state) => state.activeConversationId);
-  const selectConversation = useWorkbenchStore((state) => state.selectConversation);
   const startNewConversation = useWorkbenchStore((state) => state.startNewConversation);
+  const showArchived = useWorkbenchStore((state) => state.showArchived);
+  const setShowArchived = useWorkbenchStore((state) => state.setShowArchived);
   const [collapsed, toggleCollapsed] = useSidebarCollapsed();
 
   if (collapsed) {
@@ -1682,31 +1931,22 @@ function Sidebar() {
         </div>
       </div>
       <div className="-mr-1 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-        {conversations.map((conversation) => {
-          const artifactCount = conversation.artifact_count;
-          const artifactLabel = `${artifactCount} ${artifactCount === 1 ? "artifact" : "artifacts"}`;
-          return (
-            <button
-              key={conversation.id}
-              type="button"
-              onClick={() => void selectConversation(conversation.id)}
-              className={`w-full rounded-2xl border px-3 py-2.5 text-left transition ${
-                activeConversationId === conversation.id
-                  ? "border-sky-300/25 bg-sky-400/10"
-                  : "border-transparent hover:border-white/10 hover:bg-white/[0.04]"
-              }`}
-            >
-              <div className="truncate text-sm font-medium text-slate-100">{conversation.title}</div>
-              <div className="mt-0.5 truncate text-xs text-slate-400">
-                {conversation.last_message_preview || "Fresh conversation"}
-              </div>
-              <div className="mt-1 text-[11px] text-slate-500">
-                {artifactLabel} · {formatTimestamp(conversation.updated_at)}
-              </div>
-            </button>
-          );
-        })}
+        {conversations.map((conversation) => (
+          <ConversationCard
+            key={conversation.id}
+            conversation={conversation}
+            active={activeConversationId === conversation.id}
+          />
+        ))}
       </div>
+      <button
+        type="button"
+        onClick={() => void setShowArchived(!showArchived)}
+        className="mt-3 flex items-center justify-center gap-2 rounded-full border border-transparent px-3 py-1.5 text-[11px] text-slate-500 transition hover:border-white/10 hover:bg-white/[0.04] hover:text-slate-300"
+      >
+        {showArchived ? <ArchiveRestore size={12} /> : <Archive size={12} />}
+        {showArchived ? "Hide archived" : "Show archived"}
+      </button>
     </aside>
   );
 }
@@ -1719,6 +1959,7 @@ function App() {
   const bootstrapped = useWorkbenchStore((state) => state.bootstrapped);
   const activeArtifact = useWorkbenchStore((state) => state.activeArtifact);
   const startNewConversation = useWorkbenchStore((state) => state.startNewConversation);
+  const [canvasOnLeft, toggleCanvasOnLeft] = useCanvasOnLeft();
   useAutosave();
 
   useEffect(() => {
@@ -1787,40 +2028,66 @@ function App() {
                 )}
               </div>
             ) : (
-              <PanelGroup direction="horizontal" className="h-full gap-4">
-                <Panel defaultSize={48} minSize={34}>
-                  <div className="flex h-full flex-col gap-4">
-                    <div className="panel-shell flex-1 overflow-hidden p-5">
-                      <div className="flex h-full flex-col">
-                        <div className="mb-4 flex items-center justify-between">
-                          <div className="text-lg font-semibold text-slate-50">Chat</div>
-                          <button
-                            type="button"
-                            onClick={() => void startNewConversation()}
-                            title="New thread"
-                            aria-label="New thread"
-                            className="glass-button !px-3"
-                          >
-                            <Plus size={16} />
-                          </button>
-                        </div>
-                        <div className="flex-1 overflow-auto pr-2">
-                          <div className="space-y-6">
-                            {renderMessageList(messages)}
+              (() => {
+                const canvasPanel = (
+                  <Panel key="canvas" order={canvasOnLeft ? 1 : 2} defaultSize={66} minSize={36}>
+                    <WorkpadPane />
+                  </Panel>
+                );
+                const chatPanel = (
+                  <Panel key="chat" order={canvasOnLeft ? 2 : 1} defaultSize={34} minSize={28}>
+                    <div className="flex h-full flex-col gap-4">
+                      <div className="panel-shell flex-1 overflow-hidden p-5">
+                        <div className="flex h-full flex-col">
+                          <div className="mb-4 flex items-center justify-between">
+                            <div className="text-lg font-semibold text-slate-50">Chat</div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={toggleCanvasOnLeft}
+                                title={canvasOnLeft ? "Move canvas to the right" : "Move canvas to the left"}
+                                aria-label={canvasOnLeft ? "Move canvas to the right" : "Move canvas to the left"}
+                                className="glass-button !px-3"
+                              >
+                                <ArrowLeftRight size={16} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void startNewConversation()}
+                                title="New thread"
+                                aria-label="New thread"
+                                className="glass-button !px-3"
+                              >
+                                <Plus size={16} />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex-1 overflow-auto pr-2">
+                            <div className="space-y-6">
+                              {renderMessageList(messages)}
+                            </div>
                           </div>
                         </div>
                       </div>
+                      <ChatComposer />
                     </div>
-                    <ChatComposer />
-                  </div>
-                </Panel>
-                <PanelResizeHandle className="relative hidden w-3 shrink-0 lg:block">
-                  <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full bg-white/10" />
-                </PanelResizeHandle>
-                <Panel defaultSize={52} minSize={36}>
-                  <WorkpadPane />
-                </Panel>
-              </PanelGroup>
+                  </Panel>
+                );
+                const panels = canvasOnLeft ? [canvasPanel, chatPanel] : [chatPanel, canvasPanel];
+                return (
+                  <PanelGroup
+                    key={canvasOnLeft ? "canvas-left" : "canvas-right"}
+                    direction="horizontal"
+                    className="h-full gap-4"
+                  >
+                    {panels[0]}
+                    <PanelResizeHandle className="relative hidden w-3 shrink-0 lg:block">
+                      <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full bg-white/10" />
+                    </PanelResizeHandle>
+                    {panels[1]}
+                  </PanelGroup>
+                );
+              })()
             )}
             {error ? (
               <div className="pointer-events-none fixed bottom-5 right-5 max-w-sm rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
