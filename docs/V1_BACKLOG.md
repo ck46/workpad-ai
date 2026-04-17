@@ -30,7 +30,7 @@ Foundation. Nothing user-facing ships in M0.
 - [x] Handle rate-limit headers (`X-RateLimit-Remaining`); fail fast with a descriptive error when near zero.
 
 ### Cache layer
-- [ ] Cache read path: check `RepoCache` first; on hit, send conditional GET; on 304 update `fetched_at` and return cached content; on 200 overwrite entry.
+- [x] Cache read path: check `RepoCache` first; on hit, send conditional GET; on 304 update `fetched_at` and return cached content; on 200 overwrite entry.
 - [ ] TTL invalidation (24h) — only relevant when ETag-less responses come back.
 - [x] Helper: `content_hash_for_range(file_bytes, line_start, line_end) -> str`.
 

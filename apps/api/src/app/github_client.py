@@ -9,10 +9,15 @@ incrementally in later commits; this scaffold covers the shared plumbing.
 from __future__ import annotations
 
 import base64
+import hashlib
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+from sqlalchemy import select
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session, sessionmaker
 
 
 GITHUB_API_ROOT = "https://api.github.com"
@@ -303,3 +308,74 @@ class GitHubClient:
                 f"No commit sha returned for {repo}@{branch}: {payload!r}"
             )
         return str(sha)
+
+
+class CachedGitHubReader:
+    """Reads that go through ``RepoCache`` before hitting the network.
+
+    Sits between the drafter / verifier and the raw GitHubClient. On each
+    get_file call it looks up the (repo, ref, path) row, sends a conditional
+    request with the stored etag, and either (a) returns the cached bytes
+    when GitHub responds 304, or (b) overwrites the entry with fresh content
+    on a 200.
+    """
+
+    def __init__(self, client: GitHubClient, session_factory: "sessionmaker[Session]") -> None:
+        self._client = client
+        self._session_factory = session_factory
+
+    def get_file(self, repo: str, ref: str, path: str) -> FileContent:
+        # Local import keeps the ORM models out of the module-load path so
+        # scripts that just want the raw client don't pull SQLAlchemy in.
+        from .core import RepoCache, utcnow
+
+        with self._session_factory() as session:
+            cached = session.scalar(
+                select(RepoCache).where(
+                    RepoCache.repo == repo,
+                    RepoCache.ref == ref,
+                    RepoCache.path == path,
+                )
+            )
+
+            fresh = self._client.get_file(
+                repo,
+                ref,
+                path,
+                if_none_match=cached.etag if cached and cached.etag else None,
+            )
+
+            if fresh is None:
+                # 304 from upstream: our cached copy is still valid.
+                if cached is None:
+                    raise GitHubRequestError(
+                        "GitHub returned 304 but we have no cached entry "
+                        f"for {repo}@{ref}:{path}"
+                    )
+                cached.fetched_at = utcnow()
+                session.commit()
+                return FileContent(
+                    content=bytes(cached.content),
+                    sha=cached.content_hash,
+                    etag=cached.etag,
+                )
+
+            content_hash = hashlib.sha256(fresh.content).hexdigest()
+            if cached is None:
+                session.add(
+                    RepoCache(
+                        repo=repo,
+                        ref=ref,
+                        path=path,
+                        content=fresh.content,
+                        content_hash=content_hash,
+                        etag=fresh.etag,
+                    )
+                )
+            else:
+                cached.content = fresh.content
+                cached.content_hash = content_hash
+                cached.etag = fresh.etag
+                cached.fetched_at = utcnow()
+            session.commit()
+            return fresh
