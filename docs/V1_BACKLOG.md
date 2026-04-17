@@ -20,7 +20,7 @@ Foundation. Nothing user-facing ships in M0.
 - [x] Add Pydantic read models: `SpecSourceRead`, `CitationRead`.
 
 ### GitHub client (`github_client.py`)
-- [ ] Create new module `apps/api/src/app/github_client.py`.
+- [x] Create new module `apps/api/src/app/github_client.py`.
 - [ ] Implement `get_tree(repo, ref) -> list[str]` — returns file paths at ref.
 - [ ] Implement `get_file(repo, ref, path) -> FileContent` — raw bytes, sha, etag.
 - [ ] Implement `get_pr(repo, number) -> PRMeta`.
