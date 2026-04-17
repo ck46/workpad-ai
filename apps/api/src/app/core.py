@@ -112,6 +112,22 @@ class SpecSource(Base):
     artifact: Mapped[Artifact] = relationship()
 
 
+class Citation(Base):
+    __tablename__ = "citations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("artifacts.id", ondelete="CASCADE"), index=True)
+    anchor: Mapped[str] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    target: Mapped[dict] = mapped_column(JSON)
+    resolved_state: Mapped[str] = mapped_column(String(16), default="unknown")
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    last_observed: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    artifact: Mapped[Artifact] = relationship()
+
+
 class ArtifactVersion(Base):
     __tablename__ = "artifact_versions"
 
