@@ -17,6 +17,24 @@ class ContentType(StrEnum):
     TEXT = "text"
 
 
+class SpecType(StrEnum):
+    RFC = "rfc"
+
+
+class CitationKind(StrEnum):
+    REPO_RANGE = "repo_range"
+    REPO_PR = "repo_pr"
+    REPO_COMMIT = "repo_commit"
+    TRANSCRIPT_RANGE = "transcript_range"
+
+
+class ResolvedState(StrEnum):
+    LIVE = "live"
+    STALE = "stale"
+    MISSING = "missing"
+    UNKNOWN = "unknown"
+
+
 class MessageRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
