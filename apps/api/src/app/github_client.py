@@ -28,6 +28,11 @@ USER_AGENT = "workpad-ai/0.1 (github.com/ck46/workpad-ai)"
 # in-flight verify pass doesn't leave the system stranded mid-spec.
 RATE_LIMIT_BUFFER = 10
 
+# How long an etag-less cached response may be served without re-validating
+# against GitHub. Only applies when the upstream response didn't carry an
+# ETag; etag'd entries revalidate on every read regardless of age.
+CACHE_TTL_SECONDS = 24 * 60 * 60
+
 
 class GitHubClientError(Exception):
     """Base class for all GitHub client errors."""
@@ -327,6 +332,8 @@ class CachedGitHubReader:
     def get_file(self, repo: str, ref: str, path: str) -> FileContent:
         # Local import keeps the ORM models out of the module-load path so
         # scripts that just want the raw client don't pull SQLAlchemy in.
+        from datetime import timedelta
+
         from .core import RepoCache, utcnow
 
         with self._session_factory() as session:
@@ -337,6 +344,24 @@ class CachedGitHubReader:
                     RepoCache.path == path,
                 )
             )
+
+            # TTL short-circuit: when the stored entry has no ETag we can't
+            # revalidate cheaply, so trust it for CACHE_TTL_SECONDS before
+            # paying for another full fetch.
+            if cached is not None and not cached.etag:
+                fetched_at = cached.fetched_at
+                if fetched_at is not None:
+                    if fetched_at.tzinfo is None:
+                        # SQLite strips tz; assume the value was stored as UTC.
+                        from datetime import UTC
+
+                        fetched_at = fetched_at.replace(tzinfo=UTC)
+                    if (utcnow() - fetched_at) < timedelta(seconds=CACHE_TTL_SECONDS):
+                        return FileContent(
+                            content=bytes(cached.content),
+                            sha=cached.content_hash,
+                            etag=None,
+                        )
 
             fresh = self._client.get_file(
                 repo,
