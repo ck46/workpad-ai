@@ -19,7 +19,7 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, Preformatted, SimpleDocTemplate, Spacer
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine, func, select
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 from .schemas import ArtifactRead, ArtifactUpdateRequest, CanvasToolCall, ContentType, ConversationDetail, ConversationSummary, MessageRead
@@ -98,6 +98,18 @@ class Artifact(Base):
 
     conversation: Mapped[Conversation] = relationship(back_populates="artifacts")
     versions: Mapped[list["ArtifactVersion"]] = relationship(back_populates="artifact", cascade="all, delete-orphan")
+
+
+class SpecSource(Base):
+    __tablename__ = "spec_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("artifacts.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    artifact: Mapped[Artifact] = relationship()
 
 
 class ArtifactVersion(Base):
