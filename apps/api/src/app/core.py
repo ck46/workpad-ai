@@ -91,6 +91,7 @@ class Artifact(Base):
     title: Mapped[str] = mapped_column(String(240))
     content: Mapped[str] = mapped_column(Text, default="")
     content_type: Mapped[str] = mapped_column(String(32), default=ContentType.MARKDOWN.value)
+    spec_type: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -134,6 +135,7 @@ def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     _ensure_conversation_schema(engine)
+    _ensure_artifact_schema(engine)
 
 
 def _ensure_conversation_schema(engine) -> None:
@@ -146,6 +148,18 @@ def _ensure_conversation_schema(engine) -> None:
         }
         if "archived_at" not in columns:
             connection.exec_driver_sql("ALTER TABLE conversations ADD COLUMN archived_at DATETIME")
+
+
+def _ensure_artifact_schema(engine) -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        columns = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info('artifacts')").fetchall()
+        }
+        if "spec_type" not in columns:
+            connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN spec_type VARCHAR(32)")
 
 
 def serialize_conversation(conversation: Conversation, session: Session) -> ConversationSummary:
