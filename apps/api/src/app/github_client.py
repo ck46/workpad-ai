@@ -198,3 +198,15 @@ class GitHubClient:
             merged=bool(payload.get("merged", False)),
             html_url=str(payload.get("html_url") or ""),
         )
+
+    def get_commit(self, repo: str, sha: str) -> CommitMeta:
+        """Fetch metadata for a commit at *sha*."""
+
+        response = self._get(f"/repos/{repo}/commits/{sha}")
+        payload = response.json()
+        commit_block = payload.get("commit") or {}
+        return CommitMeta(
+            sha=str(payload.get("sha") or sha),
+            message=str(commit_block.get("message") or ""),
+            html_url=str(payload.get("html_url") or ""),
+        )

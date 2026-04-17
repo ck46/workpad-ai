@@ -24,7 +24,7 @@ Foundation. Nothing user-facing ships in M0.
 - [x] Implement `get_tree(repo, ref) -> list[str]` — returns file paths at ref.
 - [x] Implement `get_file(repo, ref, path) -> FileContent` — raw bytes, sha, etag.
 - [x] Implement `get_pr(repo, number) -> PRMeta`.
-- [ ] Implement `get_commit(repo, sha) -> CommitMeta`.
+- [x] Implement `get_commit(repo, sha) -> CommitMeta`.
 - [ ] Implement `resolve_head(repo) -> sha` — current HEAD sha of default branch (or user-specified branch).
 - [ ] Wire conditional requests (send `If-None-Match` with cached etag; treat 304 as cache-still-valid).
 - [ ] Handle rate-limit headers (`X-RateLimit-Remaining`); fail fast with a descriptive error when near zero.
