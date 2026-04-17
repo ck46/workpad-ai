@@ -35,7 +35,7 @@ Foundation. Nothing user-facing ships in M0.
 - [ ] Helper: `content_hash_for_range(file_bytes, line_start, line_end) -> str`.
 
 ### Settings & env
-- [ ] Add `GITHUB_DEFAULT_TOKEN` env var to `Settings` (optional; clearly errors if missing when a repo flow is invoked).
+- [x] Add `GITHUB_DEFAULT_TOKEN` env var to `Settings` (optional; clearly errors if missing when a repo flow is invoked).
 - [x] Update `.env.example` with a placeholder for `GITHUB_DEFAULT_TOKEN`.
 
 ### Tests

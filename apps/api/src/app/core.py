@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     default_model: str = "gpt-5.4"
     openai_reasoning_effort: str = "medium"
+    github_default_token: str = ""
     app_database_url: str = "sqlite:///./data/workpad.db"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://host.docker.internal:3000"
 
