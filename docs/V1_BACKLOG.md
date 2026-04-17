@@ -42,7 +42,7 @@ Foundation. Nothing user-facing ships in M0.
 - [ ] Unit test for `content_hash_for_range` (stable hashing across newline styles).
 - [ ] Integration test (offline, mocked httpx) for the cache: fetch → re-fetch → 304 → cache hit.
 - [ ] Integration test for rate-limit near-zero handling.
-- [ ] Scaffold `apps/api/tests/` with `conftest.py` providing an in-memory SQLite + fresh `Settings`.
+- [x] Scaffold `apps/api/tests/` with `conftest.py` providing an in-memory SQLite + fresh `Settings`.
 
 ### Exit criterion
 - [ ] From a Python REPL: `github_client.get_file(repo, sha, path)` returns content; `content_hash_for_range(content, 42, 58)` returns a stable hash; running the same call again hits the cache (304 response or `fetched_at` updated).
