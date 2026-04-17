@@ -23,7 +23,7 @@ Foundation. Nothing user-facing ships in M0.
 - [x] Create new module `apps/api/src/app/github_client.py`.
 - [x] Implement `get_tree(repo, ref) -> list[str]` — returns file paths at ref.
 - [x] Implement `get_file(repo, ref, path) -> FileContent` — raw bytes, sha, etag.
-- [ ] Implement `get_pr(repo, number) -> PRMeta`.
+- [x] Implement `get_pr(repo, number) -> PRMeta`.
 - [ ] Implement `get_commit(repo, sha) -> CommitMeta`.
 - [ ] Implement `resolve_head(repo) -> sha` — current HEAD sha of default branch (or user-specified branch).
 - [ ] Wire conditional requests (send `If-None-Match` with cached etag; treat 304 as cache-still-valid).

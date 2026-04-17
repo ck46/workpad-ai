@@ -49,6 +49,26 @@ class FileContent:
     etag: str | None
 
 
+@dataclass(frozen=True)
+class PRMeta:
+    """Minimal PR metadata used when citations point at a pull request."""
+
+    number: int
+    title: str
+    state: str
+    merged: bool
+    html_url: str
+
+
+@dataclass(frozen=True)
+class CommitMeta:
+    """Minimal commit metadata used for repo_commit citations."""
+
+    sha: str
+    message: str
+    html_url: str
+
+
 class GitHubClient:
     """Small authenticated wrapper over `httpx.Client`.
 
@@ -165,3 +185,16 @@ class GitHubClient:
         sha = str(payload.get("sha") or "")
         etag = response.headers.get("ETag")
         return FileContent(content=content, sha=sha, etag=etag)
+
+    def get_pr(self, repo: str, number: int) -> PRMeta:
+        """Fetch metadata for a single pull request."""
+
+        response = self._get(f"/repos/{repo}/pulls/{number}")
+        payload = response.json()
+        return PRMeta(
+            number=int(payload["number"]),
+            title=str(payload.get("title") or ""),
+            state=str(payload.get("state") or "open"),
+            merged=bool(payload.get("merged", False)),
+            html_url=str(payload.get("html_url") or ""),
+        )
