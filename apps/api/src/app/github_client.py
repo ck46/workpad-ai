@@ -210,3 +210,18 @@ class GitHubClient:
             message=str(commit_block.get("message") or ""),
             html_url=str(payload.get("html_url") or ""),
         )
+
+    def resolve_head(self, repo: str, branch: str | None = None) -> str:
+        """Return the commit SHA at HEAD of *branch* (default branch if omitted)."""
+
+        if branch is None:
+            repo_info = self._get(f"/repos/{repo}").json()
+            branch = str(repo_info.get("default_branch") or "main")
+
+        payload = self._get(f"/repos/{repo}/branches/{branch}").json()
+        sha = (payload.get("commit") or {}).get("sha")
+        if not sha:
+            raise GitHubRequestError(
+                f"No commit sha returned for {repo}@{branch}: {payload!r}"
+            )
+        return str(sha)
