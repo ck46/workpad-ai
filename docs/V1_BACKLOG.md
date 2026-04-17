@@ -41,7 +41,7 @@ Foundation. Nothing user-facing ships in M0.
 ### Tests
 - [x] Unit test for `content_hash_for_range` (stable hashing across newline styles).
 - [x] Integration test (offline, mocked httpx) for the cache: fetch → re-fetch → 304 → cache hit.
-- [ ] Integration test for rate-limit near-zero handling.
+- [x] Integration test for rate-limit near-zero handling.
 - [x] Scaffold `apps/api/tests/` with `conftest.py` providing an in-memory SQLite + fresh `Settings`.
 
 ### Exit criterion
