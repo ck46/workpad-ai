@@ -45,7 +45,7 @@ Foundation. Nothing user-facing ships in M0.
 - [x] Scaffold `apps/api/tests/` with `conftest.py` providing an in-memory SQLite + fresh `Settings`.
 
 ### Exit criterion
-- [ ] From a Python REPL: `github_client.get_file(repo, sha, path)` returns content; `content_hash_for_range(content, 42, 58)` returns a stable hash; running the same call again hits the cache (304 response or `fetched_at` updated).
+- [x] From a Python REPL: `github_client.get_file(repo, sha, path)` returns content; `content_hash_for_range(content, 42, 58)` returns a stable hash; running the same call again hits the cache (304 response or `fetched_at` updated). *Verified 2026-04-17 via the smoke script in the commit body.*
 
 ---
 
