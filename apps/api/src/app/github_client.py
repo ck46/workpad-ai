@@ -19,6 +19,10 @@ GITHUB_API_ROOT = "https://api.github.com"
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 USER_AGENT = "workpad-ai/0.1 (github.com/ck46/workpad-ai)"
 
+# Abort before we completely exhaust the 5K/hr authenticated budget so an
+# in-flight verify pass doesn't leave the system stranded mid-spec.
+RATE_LIMIT_BUFFER = 10
+
 
 class GitHubClientError(Exception):
     """Base class for all GitHub client errors."""
@@ -93,6 +97,8 @@ class GitHubClient:
             transport=transport,
             headers=self._default_headers(),
         )
+        self._rate_limit_remaining: int | None = None
+        self._rate_limit_reset: int | None = None
 
     def _default_headers(self) -> dict[str, str]:
         return {
@@ -115,6 +121,47 @@ class GitHubClient:
     # Low-level request helper
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Rate-limit plumbing
+    # ------------------------------------------------------------------
+
+    @property
+    def rate_limit_remaining(self) -> int | None:
+        """Last observed value of X-RateLimit-Remaining, or None before any call."""
+
+        return self._rate_limit_remaining
+
+    @property
+    def rate_limit_reset(self) -> int | None:
+        """Last observed rate-limit reset time as a Unix timestamp, or None."""
+
+        return self._rate_limit_reset
+
+    def _update_rate_limit(self, response: httpx.Response) -> None:
+        remaining = response.headers.get("X-RateLimit-Remaining")
+        reset = response.headers.get("X-RateLimit-Reset")
+        if remaining is not None:
+            try:
+                self._rate_limit_remaining = int(remaining)
+            except ValueError:
+                pass
+        if reset is not None:
+            try:
+                self._rate_limit_reset = int(reset)
+            except ValueError:
+                pass
+
+    def _guard_rate_limit(self) -> None:
+        if (
+            self._rate_limit_remaining is not None
+            and self._rate_limit_remaining < RATE_LIMIT_BUFFER
+        ):
+            raise GitHubRateLimitError(
+                "GitHub rate limit near zero "
+                f"(remaining={self._rate_limit_remaining}, reset={self._rate_limit_reset}). "
+                "Wait for the reset window before retrying."
+            )
+
     def _get(
         self,
         path: str,
@@ -123,6 +170,8 @@ class GitHubClient:
         headers: dict[str, str] | None = None,
         if_none_match: str | None = None,
     ) -> httpx.Response:
+        self._guard_rate_limit()
+
         merged_headers = dict(headers or {})
         if if_none_match:
             merged_headers["If-None-Match"] = if_none_match
@@ -132,9 +181,16 @@ class GitHubClient:
         except httpx.HTTPError as exc:
             raise GitHubRequestError(f"GitHub request failed: {exc}") from exc
 
+        self._update_rate_limit(response)
+
         if response.status_code == 304:
             # Caller asked for a conditional fetch; cache is still valid.
             return response
+        if response.status_code == 403 and response.headers.get("X-RateLimit-Remaining") == "0":
+            raise GitHubRateLimitError(
+                f"GitHub rate limit exhausted on {path} "
+                f"(reset={self._rate_limit_reset})."
+            )
         if response.status_code in (401, 403):
             raise GitHubAuthError(
                 f"GitHub rejected the request ({response.status_code}) for {path}: "
