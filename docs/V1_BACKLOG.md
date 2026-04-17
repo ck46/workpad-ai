@@ -14,8 +14,8 @@ Foundation. Nothing user-facing ships in M0.
 - [x] Add `spec_type` (nullable, default NULL) column to `Artifact` SQLAlchemy model in `apps/api/src/app/core.py`.
 - [x] Define `SpecSource` SQLAlchemy model (id, artifact_id FK, kind, payload JSON, created_at).
 - [x] Define `Citation` SQLAlchemy model (id, artifact_id FK, anchor, kind, target JSON, resolved_state, last_checked_at, last_observed JSON).
-- [ ] Define `RepoCache` SQLAlchemy model (id, repo, ref, path, content BLOB, content_hash, etag, fetched_at; unique index on (repo, ref, path)).
-- [ ] Ensure `Base.metadata.create_all` covers the new tables on `init_db`.
+- [x] Define `RepoCache` SQLAlchemy model (id, repo, ref, path, content BLOB, content_hash, etag, fetched_at; unique index on (repo, ref, path)).
+- [x] Ensure `Base.metadata.create_all` covers the new tables on `init_db`.
 - [x] Add Pydantic `SpecType`, `CitationKind`, `ResolvedState` enums to `schemas.py`.
 - [x] Add Pydantic read models: `SpecSourceRead`, `CitationRead`.
 

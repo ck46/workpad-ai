@@ -128,6 +128,22 @@ class Citation(Base):
     artifact: Mapped[Artifact] = relationship()
 
 
+class RepoCache(Base):
+    __tablename__ = "repo_cache"
+    __table_args__ = (
+        UniqueConstraint("repo", "ref", "path", name="uq_repo_cache_repo_ref_path"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    repo: Mapped[str] = mapped_column(String(240), index=True)
+    ref: Mapped[str] = mapped_column(String(64))
+    path: Mapped[str] = mapped_column(String(1024))
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    content_hash: Mapped[str] = mapped_column(String(128))
+    etag: Mapped[str | None] = mapped_column(String(256), nullable=True, default=None)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ArtifactVersion(Base):
     __tablename__ = "artifact_versions"
 
