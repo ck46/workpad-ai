@@ -32,7 +32,7 @@ Foundation. Nothing user-facing ships in M0.
 ### Cache layer
 - [ ] Cache read path: check `RepoCache` first; on hit, send conditional GET; on 304 update `fetched_at` and return cached content; on 200 overwrite entry.
 - [ ] TTL invalidation (24h) — only relevant when ETag-less responses come back.
-- [ ] Helper: `content_hash_for_range(file_bytes, line_start, line_end) -> str`.
+- [x] Helper: `content_hash_for_range(file_bytes, line_start, line_end) -> str`.
 
 ### Settings & env
 - [x] Add `GITHUB_DEFAULT_TOKEN` env var to `Settings` (optional; clearly errors if missing when a repo flow is invoked).
