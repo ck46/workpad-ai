@@ -21,7 +21,7 @@ Foundation. Nothing user-facing ships in M0.
 
 ### GitHub client (`github_client.py`)
 - [x] Create new module `apps/api/src/app/github_client.py`.
-- [ ] Implement `get_tree(repo, ref) -> list[str]` — returns file paths at ref.
+- [x] Implement `get_tree(repo, ref) -> list[str]` — returns file paths at ref.
 - [ ] Implement `get_file(repo, ref, path) -> FileContent` — raw bytes, sha, etag.
 - [ ] Implement `get_pr(repo, number) -> PRMeta`.
 - [ ] Implement `get_commit(repo, sha) -> CommitMeta`.
