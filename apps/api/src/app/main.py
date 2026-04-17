@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response, StreamingResponse
+
+from .core import (
+    export_artifact,
+    get_artifact_or_404,
+    get_conversation_detail,
+    get_session_factory,
+    get_settings,
+    init_db,
+    list_conversations,
+    serialize_artifact,
+    serialize_conversation,
+    update_artifact_manually,
+)
+from .chat_service import WorkpadChatService
+from .schemas import (
+    ArtifactUpdateRequest,
+    ChatRequest,
+    ConversationDetail,
+    ConversationSummary,
+    EditLastUserRequest,
+    ExportFormat,
+    ModelInfo,
+    RegenerateRequest,
+)
+
+
+settings = get_settings()
+session_factory = get_session_factory()
+workpad_service = WorkpadChatService()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|host\.docker\.internal)(:\d+)?$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/healthz")
+def healthcheck() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get(f"{settings.api_prefix}/models", response_model=list[ModelInfo])
+def list_models():
+    return workpad_service.available_models()
+
+
+@app.get(f"{settings.api_prefix}/conversations", response_model=list[ConversationSummary])
+def get_conversations():
+    with session_factory() as session:
+        return list_conversations(session)
+
+
+@app.post(f"{settings.api_prefix}/conversations", response_model=ConversationSummary)
+def create_conversation():
+    from .core import create_conversation as create_db_conversation
+
+    with session_factory() as session:
+        conversation = create_db_conversation(session)
+        return serialize_conversation(conversation, session)
+
+
+@app.get(f"{settings.api_prefix}/conversations/{{conversation_id}}", response_model=ConversationDetail)
+def get_conversation(conversation_id: str):
+    with session_factory() as session:
+        try:
+            return get_conversation_detail(session, conversation_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put(f"{settings.api_prefix}/artifacts/{{artifact_id}}")
+def update_artifact(artifact_id: str, payload: ArtifactUpdateRequest):
+    with session_factory() as session:
+        try:
+            artifact = update_artifact_manually(session, artifact_id, payload)
+            return artifact
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get(f"{settings.api_prefix}/artifacts/{{artifact_id}}")
+def get_artifact(artifact_id: str):
+    with session_factory() as session:
+        try:
+            artifact = get_artifact_or_404(session, artifact_id)
+            return serialize_artifact(artifact)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(f"{settings.api_prefix}/artifacts/{{artifact_id}}/export")
+def download_artifact(artifact_id: str, format: ExportFormat = ExportFormat.MARKDOWN):
+    with session_factory() as session:
+        try:
+            body, media_type, filename = export_artifact(session, artifact_id, format.value)
+            return Response(
+                content=body,
+                media_type=media_type,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+
+@app.post(f"{settings.api_prefix}/chat/stream")
+def stream_chat(payload: ChatRequest):
+    return StreamingResponse(
+        workpad_service.stream_chat(payload),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
+
+
+@app.post(f"{settings.api_prefix}/chat/regenerate")
+def regenerate_chat(payload: RegenerateRequest):
+    return StreamingResponse(
+        workpad_service.regenerate_last(payload),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
+
+
+@app.post(f"{settings.api_prefix}/chat/edit-last-user")
+def edit_last_user_chat(payload: EditLastUserRequest):
+    return StreamingResponse(
+        workpad_service.rerun_after_edit(payload),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )

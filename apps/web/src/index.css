@@ -1,0 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  @apply bg-chrome-950 bg-app-fade font-sans text-slate-100 antialiased;
+  margin: 0;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(circle at center, black, transparent 88%);
+  opacity: 0.2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.5);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.45);
+  border-radius: 999px;
+}
+
+.tiptap {
+  @apply min-h-[480px] text-[15px] leading-7 text-slate-100 outline-none;
+}
+
+.tiptap p.is-editor-empty:first-child::before {
+  color: rgba(148, 163, 184, 0.72);
+  content: attr(data-placeholder);
+  float: left;
+  pointer-events: none;
+  height: 0;
+}
+
+.tiptap h1,
+.tiptap h2,
+.tiptap h3 {
+  @apply mt-8 text-slate-50;
+}
+
+.tiptap h1 {
+  @apply text-3xl font-semibold;
+}
+
+.tiptap h2 {
+  @apply text-2xl font-semibold;
+}
+
+.tiptap h3 {
+  @apply text-xl font-semibold;
+}
+
+.tiptap code {
+  @apply rounded bg-slate-900 px-1.5 py-0.5 font-mono text-sm text-sky-200;
+}
+
+.tiptap pre {
+  @apply overflow-x-auto rounded-2xl bg-slate-950/80 p-4;
+}
+
+.panel-shell {
+  @apply rounded-[28px] border border-white/10 bg-chrome-900/80 shadow-panel backdrop-blur-xl;
+}
+
+.glass-button {
+  @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-100 transition hover:border-white/20 hover:bg-white/10;
+}
+
+.tiptap-light {
+  @apply text-slate-900;
+}
+
+.tiptap-light p.is-editor-empty:first-child::before {
+  color: rgba(100, 116, 139, 0.72);
+}
+
+.tiptap-light h1,
+.tiptap-light h2,
+.tiptap-light h3 {
+  @apply text-slate-900;
+}
+
+.tiptap-light code {
+  @apply rounded bg-stone-200/70 px-1.5 py-0.5 font-mono text-sm text-indigo-700;
+}
+
+.tiptap-light pre {
+  @apply overflow-x-auto rounded-2xl bg-stone-100/90 p-4 text-slate-900;
+}
+
+.tiptap-light pre code {
+  @apply bg-transparent text-slate-900;
+}
+
+.prose-chat h1 {
+  @apply mt-4 mb-2 text-2xl font-semibold text-slate-50;
+}
+.prose-chat h2 {
+  @apply mt-4 mb-2 text-xl font-semibold text-slate-50;
+}
+.prose-chat h3 {
+  @apply mt-3 mb-2 text-lg font-semibold text-slate-50;
+}
+.prose-chat p {
+  @apply my-2;
+}
+.prose-chat ul {
+  @apply my-2 list-disc space-y-1 pl-5;
+}
+.prose-chat ol {
+  @apply my-2 list-decimal space-y-1 pl-5;
+}
+.prose-chat strong {
+  @apply font-semibold text-slate-50;
+}
+.prose-chat em {
+  @apply italic;
+}
+.prose-chat a {
+  @apply text-sky-300 underline-offset-2 hover:underline;
+}
+.prose-chat code {
+  @apply rounded bg-slate-900/70 px-1.5 py-0.5 font-mono text-sm text-sky-200;
+}
+.prose-chat pre {
+  @apply my-3 overflow-x-auto rounded-2xl bg-slate-950/70 p-4 text-sm text-slate-100;
+}
+.prose-chat pre code {
+  @apply bg-transparent p-0 text-slate-100;
+}
+.prose-chat blockquote {
+  @apply my-3 border-l-2 border-white/20 pl-4 text-slate-300;
+}
+.prose-chat > :first-child {
+  @apply mt-0;
+}
+.prose-chat > :last-child {
+  @apply mb-0;
+}
+
+.prose-chat .hljs,
+.tiptap .hljs,
+.tiptap-light .hljs {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.prose-chat img,
+.tiptap img,
+.tiptap-light img {
+  @apply my-3 h-auto max-w-full rounded-2xl border border-white/10;
+}
+
+.tiptap-light img {
+  @apply border-stone-200/80;
+}
+
+.prose-chat .katex-display,
+.tiptap .katex-display,
+.tiptap-light .katex-display {
+  @apply my-4 overflow-x-auto;
+}
+
+.tiptap-light .katex,
+.tiptap-light .katex-display {
+  color: theme("colors.slate.900");
+}
