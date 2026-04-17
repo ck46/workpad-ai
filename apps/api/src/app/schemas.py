@@ -139,3 +139,22 @@ class ExportFormat(StrEnum):
     TEXT = "text"
     DOCX = "docx"
     PDF = "pdf"
+
+
+class SpecSourceRead(BaseModel):
+    id: str
+    artifact_id: str
+    kind: Literal["transcript", "repo"]
+    payload: dict
+    created_at: datetime
+
+
+class CitationRead(BaseModel):
+    id: str
+    artifact_id: str
+    anchor: str
+    kind: CitationKind
+    target: dict
+    resolved_state: ResolvedState
+    last_checked_at: datetime | None = None
+    last_observed: dict | None = None

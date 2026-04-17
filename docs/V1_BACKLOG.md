@@ -17,7 +17,7 @@ Foundation. Nothing user-facing ships in M0.
 - [ ] Define `RepoCache` SQLAlchemy model (id, repo, ref, path, content BLOB, content_hash, etag, fetched_at; unique index on (repo, ref, path)).
 - [ ] Ensure `Base.metadata.create_all` covers the new tables on `init_db`.
 - [x] Add Pydantic `SpecType`, `CitationKind`, `ResolvedState` enums to `schemas.py`.
-- [ ] Add Pydantic read models: `SpecSourceRead`, `CitationRead`.
+- [x] Add Pydantic read models: `SpecSourceRead`, `CitationRead`.
 
 ### GitHub client (`github_client.py`)
 - [ ] Create new module `apps/api/src/app/github_client.py`.
