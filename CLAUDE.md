@@ -88,7 +88,6 @@ Markdown artifacts are parsed into a block list by `_iter_markdown_blocks` and r
 - **Empty API submodules.** `apps/api/src/app/api/`, `core/`, `db/`, `models/`, `schemas/`, `services/` directories exist but are empty. Actual code lives at `app/core.py`, `app/schemas.py`, `app/openai_service.py`, `app/main.py`. Treat the subdirs as aspirational until someone populates them.
 - **Model env.** `OPENAI_MODEL` defaults to `gpt-5.4`, `OPENAI_REASONING_EFFORT` to `medium`. Both are read from `Settings`.
 - **Artifact concurrency.** `update_artifact_manually` raises `ValueError` (→ 409) on version mismatch. The frontend refetches on 409; don't silently retry.
-- **Not a git repo yet.** There is no `.git` in the working directory; `.gitignore` is present but unused.
 
 ## Product scope constraints
 

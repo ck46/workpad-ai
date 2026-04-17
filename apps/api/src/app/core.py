@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from html import escape as html_escape
 from io import BytesIO
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -36,14 +37,14 @@ class Settings(BaseSettings):
     default_model: str = "gpt-5.4"
     openai_reasoning_effort: str = "medium"
     app_database_url: str = "sqlite:///./data/workpad.db"
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000,http://host.docker.internal:3000"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://host.docker.internal:3000"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     @property
     def cors_origins_list(self) -> list[str]:
         if not self.cors_origins:
-            return ["http://localhost:3000", "http://127.0.0.1:3000", "http://0.0.0.0:3000", "http://host.docker.internal:3000"]
+            return ["http://localhost:3000", "http://127.0.0.1:3000", "http://host.docker.internal:3000"]
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
 
 
@@ -574,7 +575,7 @@ def export_artifact(session: Session, artifact_id: str, export_format: str) -> t
         if artifact.content_type == ContentType.MARKDOWN.value:
             body = markdown(artifact.content, extensions=["fenced_code", "tables"])
         else:
-            body = f"<pre>{artifact.content}</pre>"
+            body = f"<pre>{html_escape(artifact.content)}</pre>"
         return body, "text/html; charset=utf-8", f"{safe_name}.html"
     if export_format == "text":
         return artifact.content, "text/plain; charset=utf-8", f"{safe_name}.txt"

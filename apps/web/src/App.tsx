@@ -11,6 +11,7 @@ import markedKatex from "marked-katex-extension";
 import hljs from "highlight.js";
 import mermaid from "mermaid";
 import TurndownService from "turndown";
+import DOMPurify from "dompurify";
 
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
@@ -968,7 +969,8 @@ function formatTimestamp(value: string): string {
 
 function markdownToHtml(value: string): string {
   const parsed = marked.parse(value || "");
-  return typeof parsed === "string" ? parsed : "";
+  const raw = typeof parsed === "string" ? parsed : "";
+  return DOMPurify.sanitize(raw);
 }
 
 type ContentSegment = { kind: "markdown"; value: string } | { kind: "mermaid"; source: string };
@@ -1046,7 +1048,7 @@ function MermaidBlock({ source }: { source: string }) {
   return (
     <div
       className="my-3 overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.03] p-4 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
-      dangerouslySetInnerHTML={{ __html: svg }}
+      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } }) }}
     />
   );
 }

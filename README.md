@@ -4,6 +4,8 @@ Workpad AI is a split-pane chat and artifact workspace built around OpenAI GPT-5
 
 For the product vision, see [docs/PRODUCT_VISION.md](./docs/PRODUCT_VISION.md). For the committed v1 scope, see [docs/V1_SPEC.md](./docs/V1_SPEC.md).
 
+> **Security note.** This is a single-user, localhost-only tool. There is **no authentication or authorization** on any API endpoint — anyone who can reach the API can read, modify, or delete every conversation and artifact. Do **not** expose the backend to a public network, a shared host, or the open internet. Run it on `localhost` or behind a VPN/SSH tunnel you control.
+
 ## Stack
 
 - Frontend: React, TypeScript, Vite, Tailwind CSS, Zustand, Monaco, TipTap
