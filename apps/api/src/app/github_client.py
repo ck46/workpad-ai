@@ -121,12 +121,20 @@ class GitHubClient:
         *,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
+        if_none_match: str | None = None,
     ) -> httpx.Response:
+        merged_headers = dict(headers or {})
+        if if_none_match:
+            merged_headers["If-None-Match"] = if_none_match
+
         try:
-            response = self._client.get(path, params=params, headers=headers)
+            response = self._client.get(path, params=params, headers=merged_headers or None)
         except httpx.HTTPError as exc:
             raise GitHubRequestError(f"GitHub request failed: {exc}") from exc
 
+        if response.status_code == 304:
+            # Caller asked for a conditional fetch; cache is still valid.
+            return response
         if response.status_code in (401, 403):
             raise GitHubAuthError(
                 f"GitHub rejected the request ({response.status_code}) for {path}: "
@@ -160,8 +168,19 @@ class GitHubClient:
         payload = response.json()
         return [entry["path"] for entry in payload.get("tree", []) if entry.get("type") == "blob"]
 
-    def get_file(self, repo: str, ref: str, path: str) -> FileContent:
+    def get_file(
+        self,
+        repo: str,
+        ref: str,
+        path: str,
+        *,
+        if_none_match: str | None = None,
+    ) -> FileContent | None:
         """Fetch a single file at *ref* returning raw bytes, blob sha, and etag.
+
+        When *if_none_match* is provided and the upstream etag still matches,
+        returns ``None`` so callers can keep their cached copy without paying
+        the rate-limit cost of a full fetch.
 
         Uses the contents endpoint in JSON mode because it surfaces the git
         blob sha alongside the content. Files larger than ~1 MB are not
@@ -172,9 +191,12 @@ class GitHubClient:
         response = self._get(
             f"/repos/{repo}/contents/{path}",
             params={"ref": ref},
+            if_none_match=if_none_match,
         )
-        payload = response.json()
+        if response.status_code == 304:
+            return None
 
+        payload = response.json()
         if payload.get("encoding") != "base64" or "content" not in payload:
             raise GitHubRequestError(
                 f"Unexpected contents payload for {repo}@{ref}:{path} "
