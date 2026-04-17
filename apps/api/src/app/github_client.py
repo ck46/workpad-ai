@@ -8,6 +8,7 @@ incrementally in later commits; this scaffold covers the shared plumbing.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from typing import Any
 
@@ -138,3 +139,29 @@ class GitHubClient:
         )
         payload = response.json()
         return [entry["path"] for entry in payload.get("tree", []) if entry.get("type") == "blob"]
+
+    def get_file(self, repo: str, ref: str, path: str) -> FileContent:
+        """Fetch a single file at *ref* returning raw bytes, blob sha, and etag.
+
+        Uses the contents endpoint in JSON mode because it surfaces the git
+        blob sha alongside the content. Files larger than ~1 MB are not
+        supported by this endpoint; callers hit a GitHubRequestError if they
+        try. v1 intentionally accepts that limit.
+        """
+
+        response = self._get(
+            f"/repos/{repo}/contents/{path}",
+            params={"ref": ref},
+        )
+        payload = response.json()
+
+        if payload.get("encoding") != "base64" or "content" not in payload:
+            raise GitHubRequestError(
+                f"Unexpected contents payload for {repo}@{ref}:{path} "
+                f"(type={payload.get('type')}, encoding={payload.get('encoding')})"
+            )
+
+        content = base64.b64decode(payload["content"])
+        sha = str(payload.get("sha") or "")
+        etag = response.headers.get("ETag")
+        return FileContent(content=content, sha=sha, etag=etag)
