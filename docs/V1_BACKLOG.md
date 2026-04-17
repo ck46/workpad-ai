@@ -36,7 +36,7 @@ Foundation. Nothing user-facing ships in M0.
 
 ### Settings & env
 - [ ] Add `GITHUB_DEFAULT_TOKEN` env var to `Settings` (optional; clearly errors if missing when a repo flow is invoked).
-- [ ] Update `.env.example` with a placeholder for `GITHUB_DEFAULT_TOKEN`.
+- [x] Update `.env.example` with a placeholder for `GITHUB_DEFAULT_TOKEN`.
 
 ### Tests
 - [ ] Unit test for `content_hash_for_range` (stable hashing across newline styles).
