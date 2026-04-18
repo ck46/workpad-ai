@@ -11,6 +11,7 @@ two passes is added in subsequent commits.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -319,6 +320,7 @@ class RFCDrafter:
         conversation_id: str | None,
         transcript: str,
         repo: str,
+        on_event: "Callable[[dict[str, Any]], None] | None" = None,
     ) -> DraftResult:
         """Run the full two-pass draft flow and persist the result.
 
@@ -328,12 +330,16 @@ class RFCDrafter:
         Citation rows in a single transaction. If *conversation_id* is
         None, a new conversation is created with a title derived from the
         RFC title.
+
+        When *on_event* is provided, it is invoked at phase boundaries
+        with structured dicts so the caller can surface progress (e.g.
+        stream them as SSE events). The callback must be cheap - it runs
+        synchronously inside the drafter.
         """
 
         from .core import (
             Artifact,
             Citation,
-            Conversation,
             SpecSource,
             create_conversation,
             get_conversation_or_404,
@@ -342,13 +348,30 @@ class RFCDrafter:
         from .schemas import SpecType
         from .transcripts import parse_transcript
 
+        emit = on_event or (lambda _event: None)
+
         transcript_payload = parse_transcript(transcript)
         ref_at_draft = self._github_reader.client.resolve_head(repo)
-        repo_index = self._build_repo_index(repo, ref_at_draft)
 
+        emit(
+            {
+                "type": "draft.pass1.started",
+                "repo": repo,
+                "ref_at_draft": ref_at_draft,
+            }
+        )
+        repo_index = self._build_repo_index(repo, ref_at_draft)
         picked_paths = self._pass1_pick_files(
             transcript=transcript_payload, repo_index=repo_index
         )
+        emit(
+            {
+                "type": "draft.pass1.completed",
+                "picked_paths": picked_paths,
+            }
+        )
+
+        emit({"type": "draft.pass2.started", "file_count": len(picked_paths)})
         pass2 = self._pass2_draft(
             transcript=transcript_payload,
             repo=repo,
@@ -360,6 +383,14 @@ class RFCDrafter:
             markdown_body=pass2["markdown_body"],
             ref_at_draft=ref_at_draft,
             fetched_files=pass2["fetched_files"],
+        )
+        emit(
+            {
+                "type": "draft.citations",
+                "valid": len(valid_citations),
+                "dropped": len(dropped_citations),
+                "dropped_reasons": [d["reason"] for d in dropped_citations],
+            }
         )
 
         with self._session_factory() as session:
@@ -408,7 +439,7 @@ class RFCDrafter:
             session.commit()
             session.refresh(artifact)
 
-            return DraftResult(
+            result = DraftResult(
                 artifact_id=artifact.id,
                 conversation_id=conversation.id,
                 title=artifact.title,
@@ -418,6 +449,15 @@ class RFCDrafter:
                 ref_at_draft=ref_at_draft,
                 picked_paths=picked_paths,
             )
+            emit(
+                {
+                    "type": "artifact.created",
+                    "artifact_id": result.artifact_id,
+                    "conversation_id": result.conversation_id,
+                    "title": result.title,
+                }
+            )
+            return result
 
     # ------------------------------------------------------------------
     # Internal helpers
