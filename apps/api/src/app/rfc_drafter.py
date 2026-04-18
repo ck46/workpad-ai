@@ -354,10 +354,87 @@ class RFCDrafter:
                 seen.add(path)
         return unique[:MAX_RELEVANT_FILES]
 
+    def _pass2_draft(
+        self,
+        *,
+        transcript: TranscriptPayload,
+        repo: str,
+        ref: str,
+        picked_paths: list[str],
+    ) -> dict[str, Any]:
+        """Fetch picked files and run the pass-2 model call.
+
+        Returns the parsed tool arguments with the flat citations reshaped
+        into ``{anchor, kind, target}``. Files that fail to fetch are
+        silently skipped - the draft can still reference the transcript and
+        the successfully fetched files.
+        """
+
+        files: list[dict[str, Any]] = []
+        for path in picked_paths:
+            try:
+                file_content = self._github_reader.get_file(repo, ref, path)
+            except Exception:
+                continue
+            raw = file_content.content[:PASS2_FILE_BYTES_LIMIT]
+            files.append(
+                {
+                    "path": path,
+                    "content": raw.decode("utf-8", errors="replace"),
+                    "truncated": len(file_content.content) > PASS2_FILE_BYTES_LIMIT,
+                }
+            )
+
+        user_message = _render_pass2_user_message(
+            transcript=transcript, repo=repo, ref=ref, files=files
+        )
+        result = self._ai_client.call_tool(
+            ModelCall(
+                instructions=PASS2_INSTRUCTIONS,
+                user_message=user_message,
+                tool=DRAFT_RFC_TOOL,
+                tool_choice_name="draft_rfc",
+            )
+        )
+        args = result.arguments
+        raw_citations = args.get("citations") or []
+        return {
+            "title": str(args.get("title") or "Untitled RFC"),
+            "markdown_body": str(args.get("markdown_body") or ""),
+            "citations": [normalize_citation(item) for item in raw_citations],
+        }
+
 
 # ---------------------------------------------------------------------------
 # Module-private helpers
 # ---------------------------------------------------------------------------
+
+
+#: Each picked file is truncated to this many bytes before going into the
+#: pass-2 prompt. 20 KB per file keeps the combined context bounded even at
+#: MAX_RELEVANT_FILES=15.
+PASS2_FILE_BYTES_LIMIT = 20_000
+
+
+PASS2_INSTRUCTIONS = (
+    "You are the pass-2 drafter for Workpad RFCs. You receive a transcript "
+    "and a small set of repo files. Produce an RFC that captures the "
+    "motivation, the proposed approach, the trade-offs discussed, and the "
+    "open questions. Every claim that references code, a PR, a commit, or "
+    "a point in the transcript must carry a [[cite:<anchor>]] token in "
+    "markdown_body and a matching entry in citations.\n\n"
+    "Rules:\n"
+    "- Anchor slugs are short (4-12 lowercase alnum); each is used exactly "
+    "once in markdown_body.\n"
+    "- repo_range citations must point at code present in the provided "
+    "files and at line numbers within that file.\n"
+    "- Never invent file paths, PR numbers, or commit SHAs that weren't "
+    "shown.\n"
+    "- transcript_range citations use HH:MM:SS timestamps when they appear "
+    "in the transcript; otherwise character offsets into the transcript.\n"
+    "- Fill every property on each citation item (null for the ones that "
+    "don't apply to the kind)."
+)
 
 
 PASS1_INSTRUCTIONS = (
@@ -415,6 +492,32 @@ def _render_pass1_user_message(
         f"<tree>\n{tree_sample}\n</tree>\n"
         f"<readme path=\"{readme_path}\">\n{readme}\n</readme>\n"
         f"<manifest path=\"{manifest_path}\">\n{manifest}\n</manifest>\n"
+        "</repo>\n"
+        "<transcript>\n"
+        f"{transcript.text}\n"
+        "</transcript>"
+    )
+
+
+def _render_pass2_user_message(
+    *,
+    transcript: TranscriptPayload,
+    repo: str,
+    ref: str,
+    files: list[dict[str, Any]],
+) -> str:
+    """Render the pass-2 user message with the transcript and picked files."""
+
+    file_blocks: list[str] = []
+    for entry in files:
+        suffix = " truncated=\"true\"" if entry.get("truncated") else ""
+        file_blocks.append(
+            f"<file path=\"{entry['path']}\"{suffix}>\n{entry['content']}\n</file>"
+        )
+    files_section = "\n".join(file_blocks) if file_blocks else "<files/>"
+    return (
+        f"<repo repo=\"{repo}\" ref=\"{ref}\">\n"
+        f"{files_section}\n"
         "</repo>\n"
         "<transcript>\n"
         f"{transcript.text}\n"
