@@ -79,7 +79,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 
 ### Extend existing endpoints
 - [x] `GET /api/artifacts/{id}` returns citations inline.
-- [ ] `GET /api/conversations/{id}` returns `spec_type` for each artifact.
+- [x] `GET /api/conversations/{id}` returns `spec_type` for each artifact.
 
 ### Frontend: new-spec modal
 - [ ] Component for the modal (in `App.tsx` for now — do not break the file up unless a larger refactor is scheduled).

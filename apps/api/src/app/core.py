@@ -264,6 +264,7 @@ def serialize_artifact(artifact: Artifact, session: Session | None = None) -> Ar
         content_type=artifact.content_type,
         version=artifact.version,
         updated_at=artifact.updated_at,
+        spec_type=artifact.spec_type,
         citations=citations,
     )
 
@@ -326,7 +327,7 @@ def get_conversation_detail(session: Session, conversation_id: str) -> Conversat
     return ConversationDetail(
         conversation=serialize_conversation(conversation, session),
         messages=[serialize_message(message) for message in messages],
-        artifacts=[serialize_artifact(artifact) for artifact in artifacts],
+        artifacts=[serialize_artifact(artifact, session) for artifact in artifacts],
         active_artifact_id=active_artifact_id,
     )
 
@@ -490,7 +491,7 @@ def update_artifact_manually(session: Session, artifact_id: str, payload: Artifa
     _record_artifact_version(session, artifact, "Manual edit from the workpad editor.")
     session.commit()
     session.refresh(artifact)
-    return serialize_artifact(artifact)
+    return serialize_artifact(artifact, session)
 
 
 def get_artifact_or_404(session: Session, artifact_id: str) -> Artifact:

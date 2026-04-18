@@ -56,6 +56,7 @@ class ArtifactRead(BaseModel):
     content_type: ContentType
     version: int
     updated_at: datetime
+    spec_type: SpecType | None = None
     citations: list[CitationRead] = []
 
 
