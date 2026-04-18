@@ -329,6 +329,12 @@ class CachedGitHubReader:
         self._client = client
         self._session_factory = session_factory
 
+    @property
+    def client(self) -> GitHubClient:
+        """Underlying raw client, for callers that need uncached endpoints."""
+
+        return self._client
+
     def get_file(self, repo: str, ref: str, path: str) -> FileContent:
         # Local import keeps the ORM models out of the module-load path so
         # scripts that just want the raw client don't pull SQLAlchemy in.

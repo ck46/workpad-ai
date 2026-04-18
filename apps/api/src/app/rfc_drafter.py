@@ -274,3 +274,103 @@ class RFCDrafter:
         """Entry point for the two-pass draft flow. Implemented later."""
 
         raise NotImplementedError("RFCDrafter.draft is wired in subsequent commits.")
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_repo_index(self, repo: str, ref: str) -> dict[str, Any]:
+        """Return a cheap pass-1 context bundle for *repo* at *ref*.
+
+        Contains everything the model needs to *decide* which files matter,
+        without actually fetching their full contents:
+
+        * ``tree``       - list of blob paths from :meth:`GitHubClient.get_tree`
+        * ``top_dirs``   - sorted, deduped set of immediate subdirectories
+        * ``readme``     - first README file found at repo root, decoded to
+                           text, truncated to a soft budget (8 KB)
+        * ``manifest``   - first recognized manifest file at repo root
+                           (``pyproject.toml`` / ``package.json`` / ``go.mod`` /
+                           ``Cargo.toml`` / ``requirements.txt``) decoded to
+                           text, truncated to a soft budget (4 KB)
+        """
+
+        client = self._github_reader.client
+        tree = client.get_tree(repo, ref)
+
+        top_dirs = sorted({path.split("/", 1)[0] for path in tree if "/" in path})
+
+        readme_path = _first_match(tree, _README_CANDIDATES)
+        manifest_path = _first_match(tree, _MANIFEST_CANDIDATES)
+
+        readme_text = _safe_fetch_text(self._github_reader, repo, ref, readme_path, limit=8_000)
+        manifest_text = _safe_fetch_text(
+            self._github_reader, repo, ref, manifest_path, limit=4_000
+        )
+
+        return {
+            "repo": repo,
+            "ref": ref,
+            "tree": tree,
+            "top_dirs": top_dirs,
+            "readme_path": readme_path,
+            "readme": readme_text,
+            "manifest_path": manifest_path,
+            "manifest": manifest_text,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Module-private helpers
+# ---------------------------------------------------------------------------
+
+
+_README_CANDIDATES = ("README.md", "README.rst", "README", "readme.md")
+_MANIFEST_CANDIDATES = (
+    "pyproject.toml",
+    "package.json",
+    "go.mod",
+    "Cargo.toml",
+    "requirements.txt",
+    "Gemfile",
+    "build.gradle",
+    "pom.xml",
+)
+
+
+def _first_match(tree: list[str], candidates: tuple[str, ...]) -> str | None:
+    """Return the first path in *tree* whose basename matches any candidate."""
+
+    lowered = {name.lower() for name in candidates}
+    for path in tree:
+        basename = path.rsplit("/", 1)[-1]
+        if basename.lower() in lowered and "/" not in path:
+            return path
+    return None
+
+
+def _safe_fetch_text(
+    reader: CachedGitHubReader,
+    repo: str,
+    ref: str,
+    path: str | None,
+    *,
+    limit: int,
+) -> str | None:
+    """Fetch *path* via *reader* and return UTF-8 text truncated to *limit* bytes.
+
+    Returns ``None`` when *path* is falsy or the file cannot be fetched.
+    Errors are deliberately swallowed - the repo index is best-effort
+    context; a missing README shouldn't sink a draft.
+    """
+
+    if not path:
+        return None
+    try:
+        file = reader.get_file(repo, ref, path)
+    except Exception:
+        return None
+    text = file.content[:limit].decode("utf-8", errors="replace")
+    if len(file.content) > limit:
+        text += "\n… (truncated)"
+    return text
