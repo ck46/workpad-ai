@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
     from .github_client import CachedGitHubReader
+    from .transcripts import TranscriptPayload
 
 
 #: How many file paths Pass 1 is allowed to return. Keeps Pass 2 prompts
@@ -319,10 +320,54 @@ class RFCDrafter:
             "manifest": manifest_text,
         }
 
+    def _pass1_pick_files(
+        self,
+        *,
+        transcript: TranscriptPayload,
+        repo_index: dict[str, Any],
+    ) -> list[str]:
+        """Run the pass-1 model call and return up to 15 validated file paths.
+
+        Paths the model picks that don't appear in ``repo_index['tree']`` are
+        dropped (hallucinations); the list is truncated to
+        :data:`MAX_RELEVANT_FILES`.
+        """
+
+        user_message = _render_pass1_user_message(transcript=transcript, repo_index=repo_index)
+        result = self._ai_client.call_tool(
+            ModelCall(
+                instructions=PASS1_INSTRUCTIONS,
+                user_message=user_message,
+                tool=PICK_RELEVANT_FILES_TOOL,
+                tool_choice_name="pick_relevant_files",
+            )
+        )
+        raw_paths = result.arguments.get("paths") or []
+        tree_set = set(repo_index.get("tree") or [])
+        validated = [path for path in raw_paths if isinstance(path, str) and path in tree_set]
+        # Preserve model order but dedupe.
+        seen: set[str] = set()
+        unique: list[str] = []
+        for path in validated:
+            if path not in seen:
+                unique.append(path)
+                seen.add(path)
+        return unique[:MAX_RELEVANT_FILES]
+
 
 # ---------------------------------------------------------------------------
 # Module-private helpers
 # ---------------------------------------------------------------------------
+
+
+PASS1_INSTRUCTIONS = (
+    "You are the pass-1 file selector for the Workpad RFC drafter. Read the "
+    "meeting transcript and the repo index, then call pick_relevant_files "
+    "with the paths the drafter must fetch in pass 2. Only return paths "
+    "that appear verbatim in <repo_tree>. Prefer implementation files over "
+    "tests unless the discussion focuses on tests. Skip vendored, "
+    "generated, or lock files. Do not exceed 15 paths."
+)
 
 
 _README_CANDIDATES = ("README.md", "README.rst", "README", "readme.md")
@@ -347,6 +392,34 @@ def _first_match(tree: list[str], candidates: tuple[str, ...]) -> str | None:
         if basename.lower() in lowered and "/" not in path:
             return path
     return None
+
+
+def _render_pass1_user_message(
+    *, transcript: TranscriptPayload, repo_index: dict[str, Any]
+) -> str:
+    """Render the pass-1 XML-tagged user message.
+
+    XML-ish tags make it easy for the model to respect section boundaries
+    without dragging in a real templating system.
+    """
+
+    # Cap the tree so we never ship a 50k-path blob to the model.
+    tree_sample = "\n".join((repo_index.get("tree") or [])[:500])
+    readme = repo_index.get("readme") or "(no README)"
+    manifest = repo_index.get("manifest") or "(no manifest)"
+    manifest_path = repo_index.get("manifest_path") or "(none)"
+    readme_path = repo_index.get("readme_path") or "(none)"
+
+    return (
+        f"<repo repo=\"{repo_index['repo']}\" ref=\"{repo_index['ref']}\">\n"
+        f"<tree>\n{tree_sample}\n</tree>\n"
+        f"<readme path=\"{readme_path}\">\n{readme}\n</readme>\n"
+        f"<manifest path=\"{manifest_path}\">\n{manifest}\n</manifest>\n"
+        "</repo>\n"
+        "<transcript>\n"
+        f"{transcript.text}\n"
+        "</transcript>"
+    )
 
 
 def _safe_fetch_text(
