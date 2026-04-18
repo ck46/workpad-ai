@@ -82,11 +82,11 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [x] `GET /api/conversations/{id}` returns `spec_type` for each artifact.
 
 ### Frontend: new-spec modal
-- [ ] Component for the modal (in `App.tsx` for now — do not break the file up unless a larger refactor is scheduled).
-- [ ] Transcript textarea with character count.
-- [ ] Repo URL input (accept `org/name` or full `https://github.com/...` URL; parse on submit).
-- [ ] Optional PAT input; otherwise server uses `GITHUB_DEFAULT_TOKEN`.
-- [ ] "Draft RFC" button → opens SSE to `/api/specs/draft`.
+- [x] Component for the modal (in `App.tsx` for now — do not break the file up unless a larger refactor is scheduled).
+- [x] Transcript textarea with character count.
+- [x] Repo URL input (accept `org/name` or full `https://github.com/...` URL; parse on submit).
+- [x] Optional PAT input; otherwise server uses `GITHUB_DEFAULT_TOKEN`.
+- [x] "Draft RFC" button → opens SSE to `/api/specs/draft`.
 - [ ] Progress UI: "Selecting relevant files…" → "Drafting…" → "Verifying citations…" → done.
 
 ### Frontend: Citation TipTap node

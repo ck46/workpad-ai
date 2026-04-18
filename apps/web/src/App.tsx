@@ -63,10 +63,13 @@ import {
   FileText,
   GitCommit,
   GitPullRequest,
+  Github,
   MessageSquareText,
   Mic,
   Moon,
   MoreHorizontal,
+  NotebookPen,
+  X,
   Trash2,
   User,
   PanelLeftClose,
@@ -2279,6 +2282,219 @@ function Sidebar() {
   );
 }
 
+function normalizeRepoInput(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const patterns: RegExp[] = [
+    /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:\/.*)?$/i,
+    /^git@github\.com:([^/\s]+)\/([^/\s#?]+?)(?:\.git)?$/i,
+    /^([^/\s]+)\/([^/\s]+)$/,
+  ];
+  for (const pattern of patterns) {
+    const match = trimmed.match(pattern);
+    if (match) {
+      return `${match[1]}/${match[2]}`;
+    }
+  }
+  return null;
+}
+
+function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const draft = useWorkbenchStore((state) => state.draft);
+  const draftSpec = useWorkbenchStore((state) => state.draftSpec);
+  const resetDraft = useWorkbenchStore((state) => state.resetDraft);
+  const activeConversationId = useWorkbenchStore((state) => state.activeConversationId);
+
+  const [transcript, setTranscript] = useState("");
+  const [repoInput, setRepoInput] = useState("");
+  const [githubToken, setGithubToken] = useState("");
+  const [attachToConversation, setAttachToConversation] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const isBusy = draft.phase === "pass1" || draft.phase === "pass2" || draft.phase === "finalizing";
+
+  useEffect(() => {
+    if (!open) {
+      setLocalError(null);
+      resetDraft();
+    }
+  }, [open, resetDraft]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (draft.phase === "completed") {
+      const timer = window.setTimeout(() => onClose(), 700);
+      return () => window.clearTimeout(timer);
+    }
+  }, [open, draft.phase, onClose]);
+
+  useEffect(() => {
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape" && !isBusy) {
+        onClose();
+      }
+    }
+    if (open) {
+      document.addEventListener("keydown", handleKey);
+      return () => document.removeEventListener("keydown", handleKey);
+    }
+  }, [open, onClose, isBusy]);
+
+  if (!open) return null;
+
+  const repoNormalized = normalizeRepoInput(repoInput);
+  const transcriptCount = transcript.length;
+  const canSubmit =
+    transcript.trim().length > 0 && repoNormalized !== null && !isBusy && draft.phase !== "completed";
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLocalError(null);
+    if (!repoNormalized) {
+      setLocalError("Repo must look like 'owner/name' or a GitHub URL.");
+      return;
+    }
+    if (!transcript.trim()) {
+      setLocalError("Paste at least one line of transcript.");
+      return;
+    }
+    await draftSpec({
+      conversation_id: attachToConversation ? activeConversationId : null,
+      transcript,
+      repo: repoNormalized,
+      github_token: githubToken.trim() || undefined,
+    });
+  }
+
+  const errorToShow = localError
+    ? { code: "validation", message: localError }
+    : draft.error;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-[28px] border border-white/10 bg-chrome-900/95 p-6 shadow-panel">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.22em] text-slate-500">New artifact</div>
+            <div className="mt-1 flex items-center gap-2 text-lg font-semibold text-slate-50">
+              <NotebookPen size={18} />
+              Draft an RFC
+            </div>
+            <p className="mt-2 max-w-lg text-sm text-slate-400">
+              Paste a meeting transcript and point at a GitHub repo. Workpad picks the
+              relevant files, drafts the RFC, and anchors every claim to a citation.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isBusy}
+            className="glass-button !px-3 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
+          <div>
+            <label className="text-xs uppercase tracking-[0.18em] text-slate-400">Transcript</label>
+            <textarea
+              value={transcript}
+              onChange={(event) => setTranscript(event.target.value)}
+              disabled={isBusy}
+              rows={8}
+              placeholder={"00:00:12 Alex: We should move auth out of the legacy service.\n00:00:45 Sam: Agreed, let me check the current handler."}
+              className="mt-2 w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-400/40 focus:outline-none"
+            />
+            <div className="mt-1 text-right text-[11px] text-slate-500">
+              {transcriptCount.toLocaleString()} chars
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="flex items-center gap-1 text-xs uppercase tracking-[0.18em] text-slate-400">
+                <Github size={12} /> Repo
+              </label>
+              <input
+                value={repoInput}
+                onChange={(event) => setRepoInput(event.target.value)}
+                disabled={isBusy}
+                placeholder="acme/foo or https://github.com/acme/foo"
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-400/40 focus:outline-none"
+              />
+              <div className="mt-1 text-[11px] text-slate-500">
+                {repoInput.trim()
+                  ? repoNormalized
+                    ? `Will draft against ${repoNormalized}`
+                    : "Couldn't parse that — use owner/name or a GitHub URL."
+                  : " "}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                GitHub token <span className="text-slate-500">(optional)</span>
+              </label>
+              <input
+                value={githubToken}
+                onChange={(event) => setGithubToken(event.target.value)}
+                disabled={isBusy}
+                type="password"
+                placeholder="Falls back to GITHUB_DEFAULT_TOKEN"
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-400/40 focus:outline-none"
+              />
+              <div className="mt-1 text-[11px] text-slate-500">
+                Stored per-request. Use a PAT with <code>repo:read</code>.
+              </div>
+            </div>
+          </div>
+
+          {activeConversationId ? (
+            <label className="flex items-center gap-2 text-xs text-slate-400">
+              <input
+                type="checkbox"
+                checked={attachToConversation}
+                onChange={(event) => setAttachToConversation(event.target.checked)}
+                disabled={isBusy}
+              />
+              Attach to the current conversation
+            </label>
+          ) : null}
+
+          {errorToShow ? (
+            <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-rose-300">
+                {errorToShow.code}
+              </div>
+              <div className="mt-1">{errorToShow.message}</div>
+            </div>
+          ) : null}
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isBusy}
+              className="glass-button disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className="inline-flex items-center gap-2 rounded-full border border-sky-300/30 bg-sky-400/20 px-4 py-2 text-sm font-medium text-sky-50 transition hover:border-sky-300/50 hover:bg-sky-400/30 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isBusy ? <LoaderCircle size={14} className="animate-spin" /> : <NotebookPen size={14} />}
+              {isBusy ? "Drafting…" : "Draft RFC"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const bootstrap = useWorkbenchStore((state) => state.bootstrap);
   const messages = useWorkbenchStore((state) => state.messages);
@@ -2288,6 +2504,7 @@ function App() {
   const activeArtifact = useWorkbenchStore((state) => state.activeArtifact);
   const startNewConversation = useWorkbenchStore((state) => state.startNewConversation);
   const [canvasOnLeft, toggleCanvasOnLeft] = useCanvasOnLeft();
+  const [newSpecOpen, setNewSpecOpen] = useState(false);
   useAutosave();
 
   useEffect(() => {
@@ -2321,10 +2538,20 @@ function App() {
                       <div className="mt-1 text-lg font-semibold text-slate-50">Workpad AI</div>
                     </div>
                   </div>
-                  <button type="button" onClick={() => void startNewConversation()} className="glass-button">
-                    <Plus size={16} />
-                    New thread
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewSpecOpen(true)}
+                      className="glass-button"
+                    >
+                      <NotebookPen size={16} />
+                      New RFC
+                    </button>
+                    <button type="button" onClick={() => void startNewConversation()} className="glass-button">
+                      <Plus size={16} />
+                      New thread
+                    </button>
+                  </div>
                 </div>
 
                 {messages.length === 0 ? (
@@ -2381,6 +2608,15 @@ function App() {
                               </button>
                               <button
                                 type="button"
+                                onClick={() => setNewSpecOpen(true)}
+                                title="New RFC"
+                                aria-label="New RFC"
+                                className="glass-button !px-3"
+                              >
+                                <NotebookPen size={16} />
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => void startNewConversation()}
                                 title="New thread"
                                 aria-label="New thread"
@@ -2431,6 +2667,7 @@ function App() {
           </div>
         )}
       </main>
+      <NewSpecModal open={newSpecOpen} onClose={() => setNewSpecOpen(false)} />
     </div>
   );
 }
