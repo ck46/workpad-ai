@@ -56,7 +56,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 ### Transcript handling
 - [x] Implement `parse_transcript(text) -> TranscriptPayload` — detects `HH:MM:SS` / `[HH:MM:SS]` markers; returns `text + hash + segments?`.
 - [x] Fallback: character-offset ranges when no timestamps.
-- [ ] Unit tests with three sample transcripts (Otter-style, Granola-style, rough paste).
+- [x] Unit tests with three sample transcripts (Otter-style, Granola-style, rough paste).
 
 ### AI tool schemas
 - [ ] Define `pick_relevant_files` tool schema (strict) — input: transcript + repo index; output: `{ paths: string[], reasoning: string }`, `max_paths: 15`.
