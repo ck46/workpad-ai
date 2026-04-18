@@ -60,7 +60,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 
 ### AI tool schemas
 - [x] Define `pick_relevant_files` tool schema (strict) — input: transcript + repo index; output: `{ paths: string[], reasoning: string }`, `max_paths: 15`.
-- [ ] Define `draft_rfc` tool schema (strict) — output: `{ title, markdown_body, citations: [{ anchor, kind, target }] }`.
+- [x] Define `draft_rfc` tool schema (strict) — output: `{ title, markdown_body, citations: [{ anchor, kind, target }] }`.
 - [ ] Keep `canvas_apply` tool schema intact for legacy flows (do not break existing generic artifacts).
 
 ### Drafter (`rfc_drafter.py`)
