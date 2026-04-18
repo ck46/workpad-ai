@@ -228,10 +228,16 @@ class AIClient(Protocol):
 
 @dataclass
 class DraftResult:
-    """What a completed draft produces. Populated in later commits."""
+    """What a completed draft produces."""
 
     artifact_id: str
+    conversation_id: str
+    title: str
+    markdown_body: str
     citations: list[dict[str, Any]] = field(default_factory=list)
+    dropped_citations: list[dict[str, Any]] = field(default_factory=list)
+    ref_at_draft: str = ""
+    picked_paths: list[str] = field(default_factory=list)
 
 
 class RFCDrafter:
@@ -272,9 +278,104 @@ class RFCDrafter:
         transcript: str,
         repo: str,
     ) -> DraftResult:
-        """Entry point for the two-pass draft flow. Implemented later."""
+        """Run the full two-pass draft flow and persist the result.
 
-        raise NotImplementedError("RFCDrafter.draft is wired in subsequent commits.")
+        Parses *transcript*, pins the current HEAD of *repo* as the draft
+        ref, runs pass 1 + pass 2 + citation validation, then writes a new
+        Artifact (spec_type="rfc") with accompanying SpecSource rows and
+        Citation rows in a single transaction. If *conversation_id* is
+        None, a new conversation is created with a title derived from the
+        RFC title.
+        """
+
+        from .core import (
+            Artifact,
+            Citation,
+            Conversation,
+            SpecSource,
+            create_conversation,
+            get_conversation_or_404,
+            utcnow,
+        )
+        from .schemas import SpecType
+        from .transcripts import parse_transcript
+
+        transcript_payload = parse_transcript(transcript)
+        ref_at_draft = self._github_reader.client.resolve_head(repo)
+        repo_index = self._build_repo_index(repo, ref_at_draft)
+
+        picked_paths = self._pass1_pick_files(
+            transcript=transcript_payload, repo_index=repo_index
+        )
+        pass2 = self._pass2_draft(
+            transcript=transcript_payload,
+            repo=repo,
+            ref=ref_at_draft,
+            picked_paths=picked_paths,
+        )
+        valid_citations, dropped_citations = self._validate_citations(
+            citations=pass2["citations"],
+            markdown_body=pass2["markdown_body"],
+            ref_at_draft=ref_at_draft,
+            fetched_files=pass2["fetched_files"],
+        )
+
+        with self._session_factory() as session:
+            if conversation_id:
+                conversation = get_conversation_or_404(session, conversation_id)
+            else:
+                conversation = create_conversation(session, pass2["title"])
+
+            artifact = Artifact(
+                conversation_id=conversation.id,
+                title=pass2["title"][:240],
+                content=pass2["markdown_body"],
+                content_type="markdown",
+                spec_type=SpecType.RFC.value,
+                version=1,
+            )
+            session.add(artifact)
+            session.flush()
+
+            session.add(
+                SpecSource(
+                    artifact_id=artifact.id,
+                    kind="transcript",
+                    payload=transcript_payload.as_storage_dict(),
+                )
+            )
+            session.add(
+                SpecSource(
+                    artifact_id=artifact.id,
+                    kind="repo",
+                    payload={"repo": repo, "ref_pinned": ref_at_draft},
+                )
+            )
+            for entry in valid_citations:
+                session.add(
+                    Citation(
+                        artifact_id=artifact.id,
+                        anchor=entry["anchor"],
+                        kind=entry["kind"],
+                        target=entry["target"],
+                        resolved_state="live",
+                    )
+                )
+
+            conversation.updated_at = utcnow()
+            session.commit()
+            session.refresh(artifact)
+
+            return DraftResult(
+                artifact_id=artifact.id,
+                conversation_id=conversation.id,
+                title=artifact.title,
+                markdown_body=artifact.content,
+                citations=valid_citations,
+                dropped_citations=dropped_citations,
+                ref_at_draft=ref_at_draft,
+                picked_paths=picked_paths,
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers
