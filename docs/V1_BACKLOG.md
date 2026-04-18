@@ -87,7 +87,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [x] Repo URL input (accept `org/name` or full `https://github.com/...` URL; parse on submit).
 - [x] Optional PAT input; otherwise server uses `GITHUB_DEFAULT_TOKEN`.
 - [x] "Draft RFC" button → opens SSE to `/api/specs/draft`.
-- [ ] Progress UI: "Selecting relevant files…" → "Drafting…" → "Verifying citations…" → done.
+- [x] Progress UI: "Selecting relevant files…" → "Drafting…" → "Verifying citations…" → done.
 
 ### Frontend: Citation TipTap node
 - [x] Install/implement a custom TipTap inline node that matches `[[cite:<anchor>]]` tokens.

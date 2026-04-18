@@ -2299,6 +2299,104 @@ function normalizeRepoInput(raw: string): string | null {
   return null;
 }
 
+const DRAFT_PHASE_ORDER: DraftPhase[] = ["pass1", "pass2", "finalizing", "completed"];
+
+function draftPhaseStatus(
+  phase: DraftPhase,
+  current: DraftPhase,
+): "pending" | "active" | "done" {
+  if (current === "error") {
+    return "pending";
+  }
+  const currentIndex = DRAFT_PHASE_ORDER.indexOf(current);
+  const phaseIndex = DRAFT_PHASE_ORDER.indexOf(phase);
+  if (currentIndex < 0) return "pending";
+  if (phaseIndex < currentIndex) return "done";
+  if (phaseIndex === currentIndex) return "active";
+  return "pending";
+}
+
+function DraftProgressRow({
+  label,
+  status,
+  detail,
+}: {
+  label: string;
+  status: "pending" | "active" | "done";
+  detail?: React.ReactNode;
+}) {
+  const pillClass =
+    status === "done"
+      ? "border-emerald-300/40 bg-emerald-400/15 text-emerald-100"
+      : status === "active"
+        ? "border-sky-300/40 bg-sky-400/15 text-sky-100"
+        : "border-white/10 bg-white/5 text-slate-400";
+  return (
+    <li className="flex items-start gap-3">
+      <span
+        className={`mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full border ${pillClass}`}
+      >
+        {status === "done" ? (
+          <Check size={12} />
+        ) : status === "active" ? (
+          <LoaderCircle size={12} className="animate-spin" />
+        ) : (
+          <span className="h-1.5 w-1.5 rounded-full bg-current opacity-40" />
+        )}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div
+          className={
+            status === "pending"
+              ? "text-sm text-slate-500"
+              : "text-sm font-medium text-slate-100"
+          }
+        >
+          {label}
+        </div>
+        {detail ? <div className="mt-1 text-xs text-slate-400">{detail}</div> : null}
+      </div>
+    </li>
+  );
+}
+
+function DraftProgress() {
+  const draft = useWorkbenchStore((state) => state.draft);
+  const pickedDetail = draft.pickedPaths.length
+    ? draft.pickedPaths.slice(0, 5).join(", ") +
+      (draft.pickedPaths.length > 5 ? `, +${draft.pickedPaths.length - 5} more` : "")
+    : null;
+  const citationsDetail = draft.citationSummary
+    ? `${draft.citationSummary.valid} valid · ${draft.citationSummary.dropped} dropped` +
+      (draft.citationSummary.reasons.length
+        ? ` (${Array.from(new Set(draft.citationSummary.reasons)).join(", ")})`
+        : "")
+    : null;
+
+  return (
+    <ul className="space-y-4">
+      <DraftProgressRow
+        label="Selecting relevant files"
+        status={draftPhaseStatus("pass1", draft.phase)}
+        detail={pickedDetail}
+      />
+      <DraftProgressRow
+        label="Drafting RFC"
+        status={draftPhaseStatus("pass2", draft.phase)}
+      />
+      <DraftProgressRow
+        label="Validating citations"
+        status={draftPhaseStatus("finalizing", draft.phase)}
+        detail={citationsDetail}
+      />
+      <DraftProgressRow
+        label="Opening workpad"
+        status={draftPhaseStatus("completed", draft.phase)}
+      />
+    </ul>
+  );
+}
+
 function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const draft = useWorkbenchStore((state) => state.draft);
   const draftSpec = useWorkbenchStore((state) => state.draftSpec);
@@ -2395,6 +2493,17 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
             <X size={16} />
           </button>
         </div>
+
+        {(isBusy || draft.phase === "completed") && (
+          <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5">
+            <DraftProgress />
+            {draft.phase === "completed" ? (
+              <div className="mt-4 rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-100">
+                RFC ready — opening workpad…
+              </div>
+            ) : null}
+          </div>
+        )}
 
         <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
           <div>
