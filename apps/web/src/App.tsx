@@ -180,6 +180,22 @@ type Message = {
   isDraft?: boolean;
 };
 
+type SpecType = "rfc";
+
+type CitationKind = "repo_range" | "repo_pr" | "repo_commit" | "transcript_range";
+type ResolvedState = "live" | "stale" | "missing" | "unknown";
+
+type Citation = {
+  id: string;
+  artifact_id: string;
+  anchor: string;
+  kind: CitationKind;
+  target: Record<string, unknown>;
+  resolved_state: ResolvedState;
+  last_checked_at?: string | null;
+  last_observed?: Record<string, unknown> | null;
+};
+
 type Artifact = {
   id: string;
   conversation_id: string;
@@ -188,7 +204,38 @@ type Artifact = {
   content_type: ContentType;
   version: number;
   updated_at: string;
+  spec_type?: SpecType | null;
+  citations?: Citation[];
   dirty?: boolean;
+};
+
+type DraftSpecPayload = {
+  conversation_id?: string | null;
+  transcript: string;
+  repo: string;
+  github_token?: string;
+};
+
+type DraftPhase = "idle" | "pass1" | "pass2" | "finalizing" | "completed" | "error";
+
+type DraftState = {
+  phase: DraftPhase;
+  pickedPaths: string[];
+  citationSummary: { valid: number; dropped: number; reasons: string[] } | null;
+  artifactId: string | null;
+  conversationId: string | null;
+  error: { code: string; message: string } | null;
+  startedAt: number | null;
+};
+
+const INITIAL_DRAFT_STATE: DraftState = {
+  phase: "idle",
+  pickedPaths: [],
+  citationSummary: null,
+  artifactId: null,
+  conversationId: null,
+  error: null,
+  startedAt: null,
 };
 
 type ConversationSummary = {
@@ -237,6 +284,9 @@ type WorkbenchStore = {
   sendMessage: (message: string) => Promise<void>;
   regenerateLastAssistant: () => Promise<void>;
   editLastUserMessage: (message: string) => Promise<void>;
+  draft: DraftState;
+  draftSpec: (payload: DraftSpecPayload) => Promise<void>;
+  resetDraft: () => void;
 };
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
@@ -916,6 +966,110 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
         status: "error",
         error: error instanceof Error ? error.message : "Could not rerun the edited message.",
       });
+    }
+  },
+
+  draft: INITIAL_DRAFT_STATE,
+
+  resetDraft() {
+    set({ draft: INITIAL_DRAFT_STATE });
+  },
+
+  async draftSpec(payload: DraftSpecPayload) {
+    set({
+      draft: {
+        ...INITIAL_DRAFT_STATE,
+        phase: "pass1",
+        startedAt: Date.now(),
+      },
+    });
+
+    try {
+      const response = await fetch(`${API_BASE}/api/specs/draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Draft request failed with status ${response.status}`);
+      }
+
+      let lastArtifactId: string | null = null;
+      let lastConversationId: string | null = null;
+
+      await readSseStream(response, (event) => {
+        const type = event.type as string | undefined;
+        switch (type) {
+          case "draft.pass1.started":
+            set((state) => ({ draft: { ...state.draft, phase: "pass1" } }));
+            break;
+          case "draft.pass1.completed": {
+            const paths = Array.isArray(event.picked_paths) ? (event.picked_paths as string[]) : [];
+            set((state) => ({ draft: { ...state.draft, pickedPaths: paths } }));
+            break;
+          }
+          case "draft.pass2.started":
+            set((state) => ({ draft: { ...state.draft, phase: "pass2" } }));
+            break;
+          case "draft.citations":
+            set((state) => ({
+              draft: {
+                ...state.draft,
+                phase: "finalizing",
+                citationSummary: {
+                  valid: Number(event.valid ?? 0),
+                  dropped: Number(event.dropped ?? 0),
+                  reasons: Array.isArray(event.dropped_reasons)
+                    ? (event.dropped_reasons as string[])
+                    : [],
+                },
+              },
+            }));
+            break;
+          case "artifact.created": {
+            lastArtifactId = typeof event.artifact_id === "string" ? event.artifact_id : null;
+            lastConversationId =
+              typeof event.conversation_id === "string" ? event.conversation_id : null;
+            set((state) => ({
+              draft: {
+                ...state.draft,
+                artifactId: lastArtifactId,
+                conversationId: lastConversationId,
+              },
+            }));
+            break;
+          }
+          case "stream.completed":
+            set((state) => ({ draft: { ...state.draft, phase: "completed" } }));
+            break;
+          case "error": {
+            const code = typeof event.code === "string" ? event.code : "unexpected";
+            const message = typeof event.message === "string" ? event.message : "Draft failed";
+            set((state) => ({
+              draft: { ...state.draft, phase: "error", error: { code, message } },
+            }));
+            break;
+          }
+          default:
+            break;
+        }
+      });
+
+      if (lastConversationId) {
+        await get().selectConversation(lastConversationId);
+      }
+    } catch (error) {
+      set((state) => ({
+        draft: {
+          ...state.draft,
+          phase: "error",
+          error: {
+            code: "network",
+            message: error instanceof Error ? error.message : "Draft request failed.",
+          },
+        },
+      }));
     }
   },
 }));

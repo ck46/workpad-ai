@@ -96,8 +96,8 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [ ] Ensure pills survive copy/paste and export cleanly.
 
 ### Frontend: store changes
-- [ ] Extend Zustand store with `citations: Citation[]` for the active artifact.
-- [ ] Action `draftSpec({ transcript, repoUrl, token? })` orchestrates the SSE stream.
+- [x] Extend Zustand store with `citations: Citation[]` for the active artifact.
+- [x] Action `draftSpec({ transcript, repoUrl, token? })` orchestrates the SSE stream.
 - [ ] Update `selectConversation` / `persistActiveArtifact` to round-trip citations correctly.
 
 ### Exit criterion
