@@ -371,12 +371,14 @@ class RFCDrafter:
         """
 
         files: list[dict[str, Any]] = []
+        fetched_bytes: dict[str, bytes] = {}
         for path in picked_paths:
             try:
                 file_content = self._github_reader.get_file(repo, ref, path)
             except Exception:
                 continue
             raw = file_content.content[:PASS2_FILE_BYTES_LIMIT]
+            fetched_bytes[path] = file_content.content
             files.append(
                 {
                     "path": path,
@@ -402,7 +404,102 @@ class RFCDrafter:
             "title": str(args.get("title") or "Untitled RFC"),
             "markdown_body": str(args.get("markdown_body") or ""),
             "citations": [normalize_citation(item) for item in raw_citations],
+            "fetched_files": fetched_bytes,
         }
+
+    def _validate_citations(
+        self,
+        *,
+        citations: list[dict[str, Any]],
+        markdown_body: str,
+        ref_at_draft: str,
+        fetched_files: dict[str, bytes],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Validate citations against the repo snapshot + markdown body.
+
+        Returns ``(valid, dropped)``. Dropped entries include a ``reason`` key
+        so prompt iteration can learn from them. Valid entries are returned
+        unchanged in shape except ``repo_range`` targets gain ``ref_at_draft``
+        and ``content_hash_at_draft`` so drift detection has something stable
+        to compare against later.
+        """
+
+        from .hashing import content_hash_for_range
+
+        valid: list[dict[str, Any]] = []
+        dropped: list[dict[str, Any]] = []
+        seen_anchors: set[str] = set()
+
+        for citation in citations:
+            anchor = citation.get("anchor")
+            if not isinstance(anchor, str) or not anchor:
+                dropped.append({"citation": citation, "reason": "missing_anchor"})
+                continue
+            if anchor in seen_anchors:
+                dropped.append({"citation": citation, "reason": "duplicate_anchor"})
+                continue
+            token = f"[[cite:{anchor}]]"
+            if token not in markdown_body:
+                dropped.append({"citation": citation, "reason": "anchor_not_in_body"})
+                continue
+
+            kind = citation.get("kind")
+            target = dict(citation.get("target") or {})
+
+            if kind == "repo_range":
+                path = target.get("path")
+                line_start = target.get("line_start")
+                line_end = target.get("line_end")
+                if path not in fetched_files:
+                    dropped.append({"citation": citation, "reason": "path_not_in_snapshot"})
+                    continue
+                if not isinstance(line_start, int) or not isinstance(line_end, int):
+                    dropped.append({"citation": citation, "reason": "non_integer_line_range"})
+                    continue
+                if line_start < 1 or line_end < line_start:
+                    dropped.append({"citation": citation, "reason": "invalid_line_range"})
+                    continue
+                file_bytes = fetched_files[path]
+                file_line_count = file_bytes.count(b"\n") + (
+                    0 if file_bytes.endswith(b"\n") or not file_bytes else 1
+                )
+                if line_start > file_line_count:
+                    dropped.append({"citation": citation, "reason": "line_start_past_eof"})
+                    continue
+                # Clamp line_end to EOF rather than dropping; the pinned
+                # content hash captures the actual observed lines.
+                clamped_end = min(line_end, file_line_count)
+                target["line_end"] = clamped_end
+                target["ref_at_draft"] = ref_at_draft
+                target["content_hash_at_draft"] = content_hash_for_range(
+                    file_bytes, line_start, clamped_end
+                )
+            elif kind == "repo_pr":
+                number = target.get("number")
+                if not isinstance(number, int) or number < 1:
+                    dropped.append({"citation": citation, "reason": "invalid_pr_number"})
+                    continue
+                target["ref_at_draft"] = ref_at_draft
+            elif kind == "repo_commit":
+                sha = target.get("sha")
+                if not isinstance(sha, str) or len(sha) < 7:
+                    dropped.append({"citation": citation, "reason": "invalid_commit_sha"})
+                    continue
+                target["ref_at_draft"] = ref_at_draft
+            elif kind == "transcript_range":
+                start = target.get("start")
+                end = target.get("end")
+                if not start or not end:
+                    dropped.append({"citation": citation, "reason": "incomplete_transcript_range"})
+                    continue
+            else:
+                dropped.append({"citation": citation, "reason": f"unknown_kind:{kind}"})
+                continue
+
+            seen_anchors.add(anchor)
+            valid.append({"anchor": anchor, "kind": kind, "target": target})
+
+        return valid, dropped
 
 
 # ---------------------------------------------------------------------------

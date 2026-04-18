@@ -68,7 +68,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [x] Build repo index: file tree, top-level directory names, README content, manifest file (`package.json`, `pyproject.toml`, `go.mod`, etc. — pick first found).
 - [x] Pass 1: call model with `pick_relevant_files` tool and `tool_choice` forcing it.
 - [x] Pass 2: fetch picked files via `github_client` + cache, build system + user prompt, call model with `draft_rfc` tool.
-- [ ] Parse and validate each citation's `target` against the repo snapshot; drop invalid citations (log them as `draft_drop` events for prompt iteration).
+- [x] Parse and validate each citation's `target` against the repo snapshot; drop invalid citations (log them as `draft_drop` events for prompt iteration).
 - [ ] Persist `Artifact` (`spec_type="rfc"`, content = markdown_body), `SpecSource` (transcript + repo with `ref_pinned`), and `Citation` rows in one transaction.
 
 ### Draft endpoint
