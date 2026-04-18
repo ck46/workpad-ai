@@ -64,7 +64,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [ ] Keep `canvas_apply` tool schema intact for legacy flows (do not break existing generic artifacts).
 
 ### Drafter (`rfc_drafter.py`)
-- [ ] Create new module `apps/api/src/app/rfc_drafter.py`.
+- [x] Create new module `apps/api/src/app/rfc_drafter.py` (scaffold with injected deps; methods land in follow-ups).
 - [ ] Build repo index: file tree, top-level directory names, README content, manifest file (`package.json`, `pyproject.toml`, `go.mod`, etc. — pick first found).
 - [ ] Pass 1: call model with `pick_relevant_files` tool and `tool_choice` forcing it.
 - [ ] Pass 2: fetch picked files via `github_client` + cache, build system + user prompt, call model with `draft_rfc` tool.

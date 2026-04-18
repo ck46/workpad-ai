@@ -11,7 +11,13 @@ two passes is added in subsequent commits.
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session, sessionmaker
+
+    from .github_client import CachedGitHubReader
 
 
 #: How many file paths Pass 1 is allowed to return. Keeps Pass 2 prompts
@@ -174,3 +180,97 @@ def normalize_citation(item: dict[str, Any]) -> dict[str, Any]:
     else:  # pragma: no cover - enum is enforced by strict schema
         raise ValueError(f"Unknown citation kind: {kind}")
     return {"anchor": anchor, "kind": kind, "target": target}
+
+
+# ---------------------------------------------------------------------------
+# AI client protocol
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ToolCallResult:
+    """Outcome of a single tool-forced model call."""
+
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ModelCall:
+    """Inputs for a single model round trip."""
+
+    instructions: str
+    user_message: str
+    tool: dict[str, Any]
+    #: When set, the model is forced to call this tool (by name). When
+    #: ``None`` the model is free to reply conversationally, which the
+    #: drafter never wants today.
+    tool_choice_name: str | None = None
+
+
+class AIClient(Protocol):
+    """Minimal drafter-facing client interface.
+
+    Kept narrow so (a) the drafter doesn't couple to any SDK surface and
+    (b) tests can substitute a fake that replays captured tool calls.
+    Real implementations wrap ``openai.OpenAI().responses.create``.
+    """
+
+    def call_tool(self, call: ModelCall) -> ToolCallResult:  # pragma: no cover - protocol
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Drafter
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DraftResult:
+    """What a completed draft produces. Populated in later commits."""
+
+    artifact_id: str
+    citations: list[dict[str, Any]] = field(default_factory=list)
+
+
+class RFCDrafter:
+    """Two-pass RFC drafter.
+
+    Construction is dependency-injected so the same class drives the real
+    FastAPI flow and the offline test suite:
+
+    * ``ai_client``      - any object implementing :class:`AIClient`.
+    * ``github_reader``  - :class:`CachedGitHubReader` that routes reads
+                           through ``RepoCache``.
+    * ``session_factory``- SQLAlchemy session factory used for persistence.
+    * ``model``          - identifier forwarded to the AI client.
+
+    The class methods (repo index, pass 1, pass 2, validation, persistence)
+    are added in subsequent commits; this scaffold only wires the
+    dependencies and surfaces a ``draft`` entry point that raises until
+    implemented.
+    """
+
+    def __init__(
+        self,
+        *,
+        ai_client: AIClient,
+        github_reader: CachedGitHubReader,
+        session_factory: "sessionmaker[Session]",
+        model: str,
+    ) -> None:
+        self._ai_client = ai_client
+        self._github_reader = github_reader
+        self._session_factory = session_factory
+        self._model = model
+
+    def draft(
+        self,
+        *,
+        conversation_id: str | None,
+        transcript: str,
+        repo: str,
+    ) -> DraftResult:
+        """Entry point for the two-pass draft flow. Implemented later."""
+
+        raise NotImplementedError("RFCDrafter.draft is wired in subsequent commits.")
