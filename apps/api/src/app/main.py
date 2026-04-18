@@ -22,6 +22,7 @@ from .core import (
     update_artifact_manually,
 )
 from .chat_service import WorkpadChatService
+from .github_client import GitHubAuthError, GitHubClientError
 from .schemas import (
     ArtifactUpdateRequest,
     ChatRequest,
@@ -31,12 +32,16 @@ from .schemas import (
     ExportFormat,
     ModelInfo,
     RegenerateRequest,
+    SpecDraftRequest,
+    SpecDraftResult,
 )
+from .spec_service import SpecDraftService
 
 
 settings = get_settings()
 session_factory = get_session_factory()
 workpad_service = WorkpadChatService()
+spec_draft_service = SpecDraftService()
 
 
 @asynccontextmanager
@@ -185,4 +190,25 @@ def edit_last_user_chat(payload: EditLastUserRequest):
         workpad_service.rerun_after_edit(payload),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
+    )
+
+
+@app.post(f"{settings.api_prefix}/specs/draft", response_model=SpecDraftResult)
+def draft_spec(payload: SpecDraftRequest):
+    try:
+        result = spec_draft_service.draft(payload)
+    except GitHubAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except GitHubClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SpecDraftResult(
+        artifact_id=result.artifact_id,
+        conversation_id=result.conversation_id,
+        title=result.title,
+        ref_at_draft=result.ref_at_draft,
+        picked_paths=result.picked_paths,
+        citation_count=len(result.citations),
+        dropped_count=len(result.dropped_citations),
     )

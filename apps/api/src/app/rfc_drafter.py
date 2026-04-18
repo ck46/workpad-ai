@@ -221,6 +221,48 @@ class AIClient(Protocol):
         ...
 
 
+class OpenAIResponsesAIClient:
+    """:class:`AIClient` backed by the OpenAI Responses API.
+
+    Forces the named tool (when ``tool_choice_name`` is set), disables
+    parallel tool calls, and extracts the first function-call item from the
+    response. JSON-decodes the tool arguments before handing them back.
+    """
+
+    def __init__(self, client: Any, model: str) -> None:
+        self._client = client
+        self._model = model
+
+    def call_tool(self, call: ModelCall) -> ToolCallResult:
+        import json
+
+        tool_choice: Any = "auto"
+        if call.tool_choice_name:
+            tool_choice = {"type": "function", "name": call.tool_choice_name}
+
+        response = self._client.responses.create(
+            model=self._model,
+            instructions=call.instructions,
+            input=[{"role": "user", "content": call.user_message}],
+            tools=[call.tool],
+            tool_choice=tool_choice,
+            parallel_tool_calls=False,
+        )
+
+        for item in getattr(response, "output", []):
+            if getattr(item, "type", None) == "function_call":
+                name = getattr(item, "name", "") or ""
+                if call.tool_choice_name and name != call.tool_choice_name:
+                    continue
+                raw_args = getattr(item, "arguments", "") or "{}"
+                return ToolCallResult(name=name, arguments=json.loads(raw_args))
+
+        raise RuntimeError(
+            f"Model response carried no function_call for tool "
+            f"{call.tool_choice_name or call.tool['name']!r}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Drafter
 # ---------------------------------------------------------------------------

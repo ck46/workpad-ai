@@ -158,3 +158,21 @@ class CitationRead(BaseModel):
     resolved_state: ResolvedState
     last_checked_at: datetime | None = None
     last_observed: dict | None = None
+
+
+class SpecDraftRequest(BaseModel):
+    conversation_id: str | None = None
+    transcript: str = Field(min_length=1, max_length=200_000)
+    repo: str = Field(min_length=3, max_length=240)
+    # Optional per-request PAT. When omitted the backend uses GITHUB_DEFAULT_TOKEN.
+    github_token: str | None = None
+
+
+class SpecDraftResult(BaseModel):
+    artifact_id: str
+    conversation_id: str
+    title: str
+    ref_at_draft: str
+    picked_paths: list[str]
+    citation_count: int
+    dropped_count: int

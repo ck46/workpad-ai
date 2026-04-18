@@ -72,8 +72,8 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [x] Persist `Artifact` (`spec_type="rfc"`, content = markdown_body), `SpecSource` (transcript + repo with `ref_pinned`), and `Citation` rows in one transaction.
 
 ### Draft endpoint
-- [ ] Add `POST /api/specs/draft` route in `main.py`.
-- [ ] Request body: `{ conversation_id?, transcript, repo_url, repo_token_ref? }`.
+- [x] Add `POST /api/specs/draft` route in `main.py`.
+- [x] Request body: `{ conversation_id?, transcript, repo_url, repo_token_ref? }`.
 - [ ] SSE event sequence: `draft.pass1.started` → `draft.pass1.completed` (with selected paths) → `draft.pass2.started` → `draft.citations` (streamed as they land) → `artifact.created` → `stream.completed`.
 - [ ] Error events for: repo unreachable, invalid PAT, transcript missing, model failure.
 
