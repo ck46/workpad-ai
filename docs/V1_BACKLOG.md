@@ -90,9 +90,9 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [ ] Progress UI: "Selecting relevant files…" → "Drafting…" → "Verifying citations…" → done.
 
 ### Frontend: Citation TipTap node
-- [ ] Install/implement a custom TipTap inline node that matches `[[cite:<anchor>]]` tokens.
-- [ ] Render as non-editable pill with a kind-specific icon (file, PR, commit, transcript) + truncated target (e.g. `auth.ts:42`).
-- [ ] No popover or status badge yet — those are M2.
+- [x] Install/implement a custom TipTap inline node that matches `[[cite:<anchor>]]` tokens.
+- [x] Render as non-editable pill with a kind-specific icon (file, PR, commit, transcript) + truncated target (e.g. `auth.ts:42`).
+- [x] No popover or status badge yet — those are M2.
 - [ ] Ensure pills survive copy/paste and export cleanly.
 
 ### Frontend: store changes

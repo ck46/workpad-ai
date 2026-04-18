@@ -120,6 +120,32 @@ body::before {
   @apply bg-transparent text-slate-900;
 }
 
+.workpad-citation {
+  @apply mx-0.5 inline-flex max-w-[220px] select-none items-center gap-1 rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 align-baseline text-[11px] font-medium text-sky-100 no-underline transition;
+  vertical-align: baseline;
+  line-height: 1.4;
+}
+
+.workpad-citation:hover {
+  @apply border-sky-300/50 bg-sky-400/20;
+}
+
+.workpad-citation__icon {
+  @apply flex h-4 w-4 flex-none items-center justify-center text-sky-200;
+}
+
+.workpad-citation__label {
+  @apply truncate;
+}
+
+.tiptap-light .workpad-citation {
+  @apply border-sky-200 bg-sky-50 text-sky-700;
+}
+
+.tiptap-light .workpad-citation__icon {
+  @apply text-sky-600;
+}
+
 .prose-chat h1 {
   @apply mt-4 mb-2 text-2xl font-semibold text-slate-50;
 }

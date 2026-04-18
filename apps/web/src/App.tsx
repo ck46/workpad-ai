@@ -2,7 +2,15 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { Editor as MonacoEditor } from "@monaco-editor/react";
 import type { editor as MonacoEditorNS } from "monaco-editor";
-import { EditorContent, type Editor as TiptapEditorType, useEditor } from "@tiptap/react";
+import {
+  EditorContent,
+  NodeViewWrapper,
+  ReactNodeViewRenderer,
+  type Editor as TiptapEditorType,
+  type NodeViewProps,
+  useEditor,
+} from "@tiptap/react";
+import { Node as TiptapNode, mergeAttributes } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { marked } from "marked";
@@ -52,7 +60,11 @@ import {
   LoaderCircle,
   Archive,
   ArchiveRestore,
+  FileText,
+  GitCommit,
+  GitPullRequest,
   MessageSquareText,
+  Mic,
   Moon,
   MoreHorizontal,
   Trash2,
@@ -1134,11 +1146,144 @@ function formatTimestamp(value: string): string {
   }).format(new Date(value));
 }
 
-function markdownToHtml(value: string): string {
-  const parsed = marked.parse(value || "");
-  const raw = typeof parsed === "string" ? parsed : "";
-  return DOMPurify.sanitize(raw);
+const CITATION_TOKEN_RE = /\[\[cite:([a-z0-9_-]{2,32})\]\]/gi;
+
+function replaceCitationTokensWithSpans(markdown: string): string {
+  return markdown.replace(
+    CITATION_TOKEN_RE,
+    (_match, anchor) => `<span data-cite="${String(anchor).toLowerCase()}"></span>`,
+  );
 }
+
+function markdownToHtml(value: string): string {
+  const withSpans = replaceCitationTokensWithSpans(value || "");
+  const parsed = marked.parse(withSpans);
+  const raw = typeof parsed === "string" ? parsed : "";
+  return DOMPurify.sanitize(raw, { ADD_ATTR: ["data-cite"] });
+}
+
+turndown.addRule("workpad-citation", {
+  filter: (node) =>
+    node.nodeName === "SPAN" &&
+    (node as HTMLElement).hasAttribute?.("data-cite"),
+  replacement: (_content, node) => {
+    const anchor = (node as HTMLElement).getAttribute("data-cite") ?? "";
+    return anchor ? `[[cite:${anchor}]]` : "";
+  },
+});
+
+function iconForCitationKind(kind: CitationKind) {
+  switch (kind) {
+    case "repo_pr":
+      return <GitPullRequest size={12} />;
+    case "repo_commit":
+      return <GitCommit size={12} />;
+    case "transcript_range":
+      return <Mic size={12} />;
+    case "repo_range":
+    default:
+      return <FileText size={12} />;
+  }
+}
+
+function citationPillLabel(citation: Citation | null, anchor: string): string {
+  if (!citation) {
+    return anchor;
+  }
+  const target = citation.target ?? {};
+  switch (citation.kind) {
+    case "repo_range": {
+      const path = String(target.path ?? "");
+      const start = target.line_start;
+      const end = target.line_end;
+      const basename = path.split("/").pop() || path;
+      if (typeof start === "number" && typeof end === "number") {
+        return start === end ? `${basename}:${start}` : `${basename}:${start}-${end}`;
+      }
+      return basename || anchor;
+    }
+    case "repo_pr": {
+      const number = target.number;
+      return typeof number === "number" ? `PR #${number}` : anchor;
+    }
+    case "repo_commit": {
+      const sha = String(target.sha ?? "");
+      return sha ? `commit ${sha.slice(0, 7)}` : anchor;
+    }
+    case "transcript_range": {
+      const start = String(target.start ?? "");
+      return start ? `transcript ${start}` : anchor;
+    }
+    default:
+      return anchor;
+  }
+}
+
+function CitationPill({ node }: NodeViewProps) {
+  const anchor = String(node.attrs.anchor ?? "").toLowerCase();
+  const citation = useWorkbenchStore((state) =>
+    state.activeArtifact?.citations?.find((item) => item.anchor === anchor) ?? null,
+  );
+
+  const label = citationPillLabel(citation, anchor);
+  const title = citation ? `${citation.kind} · ${label}` : `Unresolved citation: ${anchor}`;
+
+  return (
+    <NodeViewWrapper
+      as="span"
+      contentEditable={false}
+      draggable={false}
+      data-cite={anchor}
+      className="workpad-citation"
+      title={title}
+    >
+      <span className="workpad-citation__icon" aria-hidden>
+        {citation ? iconForCitationKind(citation.kind) : <FileText size={12} />}
+      </span>
+      <span className="workpad-citation__label">{label}</span>
+    </NodeViewWrapper>
+  );
+}
+
+const CitationExtension = TiptapNode.create({
+  name: "citation",
+  inline: true,
+  group: "inline",
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      anchor: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("data-cite") ?? "",
+        renderHTML: (attributes) =>
+          attributes.anchor ? { "data-cite": String(attributes.anchor).toLowerCase() } : {},
+      },
+    };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: "span[data-cite]",
+        getAttrs: (element) => {
+          const anchor = (element as HTMLElement).getAttribute("data-cite");
+          return anchor ? { anchor: anchor.toLowerCase() } : false;
+        },
+      },
+    ];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["span", mergeAttributes(HTMLAttributes, { class: "workpad-citation" })];
+  },
+
+  addNodeView() {
+    return ReactNodeViewRenderer(CitationPill);
+  },
+});
 
 type ContentSegment = { kind: "markdown"; value: string } | { kind: "mermaid"; source: string };
 
@@ -1567,7 +1712,11 @@ function MarkdownEditor({
 
   const editor = useEditor(
     {
-      extensions: [StarterKit, Image.configure({ inline: false, allowBase64: true })],
+      extensions: [
+        StarterKit,
+        Image.configure({ inline: false, allowBase64: true }),
+        CitationExtension,
+      ],
       content: markdownToHtml(value),
       immediatelyRender: false,
       editable: !readOnly,
