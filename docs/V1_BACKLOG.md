@@ -93,7 +93,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [x] Install/implement a custom TipTap inline node that matches `[[cite:<anchor>]]` tokens.
 - [x] Render as non-editable pill with a kind-specific icon (file, PR, commit, transcript) + truncated target (e.g. `auth.ts:42`).
 - [x] No popover or status badge yet — those are M2.
-- [ ] Ensure pills survive copy/paste and export cleanly.
+- [x] Ensure pills survive copy/paste and export cleanly.
 
 ### Frontend: store changes
 - [x] Extend Zustand store with `citations: Citation[]` for the active artifact.

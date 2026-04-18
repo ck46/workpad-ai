@@ -10,7 +10,7 @@ import {
   type NodeViewProps,
   useEditor,
 } from "@tiptap/react";
-import { Node as TiptapNode, mergeAttributes } from "@tiptap/core";
+import { Node as TiptapNode, mergeAttributes, nodePasteRule } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { marked } from "marked";
@@ -1282,6 +1282,16 @@ const CitationExtension = TiptapNode.create({
 
   addNodeView() {
     return ReactNodeViewRenderer(CitationPill);
+  },
+
+  addPasteRules() {
+    return [
+      nodePasteRule({
+        find: /\[\[cite:([a-z0-9_-]{2,32})\]\]/gi,
+        type: this.type,
+        getAttributes: (match) => ({ anchor: String(match[1] ?? "").toLowerCase() }),
+      }),
+    ];
   },
 });
 
