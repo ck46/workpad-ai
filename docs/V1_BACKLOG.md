@@ -54,8 +54,8 @@ Foundation. Nothing user-facing ships in M0.
 First user-visible feature. Paste transcript + point at repo → RFC with citation pills.
 
 ### Transcript handling
-- [ ] Implement `parse_transcript(text) -> TranscriptPayload` — detects `HH:MM:SS` / `[HH:MM:SS]` markers; returns `text + hash + segments?`.
-- [ ] Fallback: character-offset ranges when no timestamps.
+- [x] Implement `parse_transcript(text) -> TranscriptPayload` — detects `HH:MM:SS` / `[HH:MM:SS]` markers; returns `text + hash + segments?`.
+- [x] Fallback: character-offset ranges when no timestamps.
 - [ ] Unit tests with three sample transcripts (Otter-style, Granola-style, rough paste).
 
 ### AI tool schemas
