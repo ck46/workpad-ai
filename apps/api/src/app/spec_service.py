@@ -16,7 +16,14 @@ from typing import Any
 from openai import OpenAI
 
 from .core import get_session_factory, get_settings
-from .github_client import CachedGitHubReader, GitHubAuthError, GitHubClient
+from .github_client import (
+    CachedGitHubReader,
+    GitHubAuthError,
+    GitHubClient,
+    GitHubClientError,
+    GitHubNotFoundError,
+    GitHubRateLimitError,
+)
 from .rfc_drafter import DraftResult, OpenAIResponsesAIClient, RFCDrafter
 from .schemas import SpecDraftRequest
 
@@ -26,6 +33,34 @@ _SENTINEL = object()
 
 def _sse_event(payload: dict[str, Any]) -> str:
     return f"event: app\ndata: {json.dumps(payload, ensure_ascii=True)}\n\n"
+
+
+def _classify_error(exc: BaseException) -> dict[str, Any]:
+    """Map a raised exception to a structured SSE error event.
+
+    Error ``code`` is a stable string the frontend can branch on; ``message``
+    is the short form we surface to users. Anything unexpected falls into
+    ``unexpected`` so the frontend can still surface *something* useful
+    instead of spinning forever.
+    """
+
+    if isinstance(exc, GitHubAuthError):
+        return {"type": "error", "code": "invalid_pat", "message": str(exc)}
+    if isinstance(exc, GitHubRateLimitError):
+        return {"type": "error", "code": "rate_limit", "message": str(exc)}
+    if isinstance(exc, GitHubNotFoundError):
+        return {"type": "error", "code": "repo_unreachable", "message": str(exc)}
+    if isinstance(exc, GitHubClientError):
+        return {"type": "error", "code": "github_error", "message": str(exc)}
+    if isinstance(exc, ValueError):
+        return {"type": "error", "code": "invalid_input", "message": str(exc)}
+    if exc.__class__.__module__.startswith("openai"):
+        return {"type": "error", "code": "model_error", "message": str(exc) or exc.__class__.__name__}
+    return {
+        "type": "error",
+        "code": "unexpected",
+        "message": str(exc) or exc.__class__.__name__,
+    }
 
 
 class SpecDraftService:
@@ -68,7 +103,7 @@ class SpecDraftService:
         try:
             drafter, github_client = self._build_drafter(payload)
         except Exception as exc:  # noqa: BLE001 - surface any setup failure as an event
-            yield _sse_event({"type": "error", "message": str(exc)})
+            yield _sse_event(_classify_error(exc))
             return
 
         def emit(event: dict[str, Any]) -> None:
@@ -92,7 +127,7 @@ class SpecDraftService:
                     }
                 )
             except Exception as exc:  # noqa: BLE001 - deliver any failure as an event
-                event_queue.put({"type": "error", "message": str(exc)})
+                event_queue.put(_classify_error(exc))
             finally:
                 event_queue.put(_SENTINEL)
 
