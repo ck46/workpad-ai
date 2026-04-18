@@ -324,6 +324,14 @@ function updateArtifactCollection(artifacts: Artifact[], artifact: Artifact): Ar
   return [artifact, ...artifacts.filter((item) => item.id !== artifact.id)];
 }
 
+function normalizeArtifact(artifact: Artifact): Artifact {
+  return {
+    ...artifact,
+    citations: artifact.citations ?? [],
+    spec_type: artifact.spec_type ?? null,
+  };
+}
+
 function filenameFromDisposition(header: string | null, fallback: string): string {
   if (!header) {
     return fallback;
@@ -618,13 +626,16 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     set({ status: "loading", error: null });
     try {
       const detail = await requestJson<ConversationDetail>(`/api/conversations/${conversationId}`);
+      const normalizedArtifacts = detail.artifacts.map(normalizeArtifact);
       const activeArtifact =
-        detail.artifacts.find((artifact) => artifact.id === detail.active_artifact_id) ?? detail.artifacts[0] ?? null;
+        normalizedArtifacts.find((artifact) => artifact.id === detail.active_artifact_id) ??
+        normalizedArtifacts[0] ??
+        null;
       set({
         activeConversationId: conversationId,
         conversations: upsertConversation(get().conversations, detail.conversation),
         messages: detail.messages,
-        artifacts: detail.artifacts,
+        artifacts: normalizedArtifacts,
         activeArtifact,
         status: "idle",
       });
@@ -760,15 +771,17 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     const saveRequestId = ++artifactSaveRequestCounter;
 
     try {
-      const next = await requestJson<Artifact>(`/api/artifacts/${snapshot.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          title: snapshot.title,
-          content: snapshot.content,
-          content_type: snapshot.content_type,
-          expected_version: snapshot.version,
+      const next = normalizeArtifact(
+        await requestJson<Artifact>(`/api/artifacts/${snapshot.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            title: snapshot.title,
+            content: snapshot.content,
+            content_type: snapshot.content_type,
+            expected_version: snapshot.version,
+          }),
         }),
-      });
+      );
 
       set((state) => {
         const current = state.activeArtifact;
@@ -827,7 +840,7 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       return;
     }
     try {
-      const next = await requestJson<Artifact>(`/api/artifacts/${current.id}`);
+      const next = normalizeArtifact(await requestJson<Artifact>(`/api/artifacts/${current.id}`));
       set({
         activeArtifact: { ...next, dirty: false },
         artifacts: updateArtifactCollection(get().artifacts, { ...next, dirty: false }),

@@ -98,7 +98,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 ### Frontend: store changes
 - [x] Extend Zustand store with `citations: Citation[]` for the active artifact.
 - [x] Action `draftSpec({ transcript, repoUrl, token? })` orchestrates the SSE stream.
-- [ ] Update `selectConversation` / `persistActiveArtifact` to round-trip citations correctly.
+- [x] Update `selectConversation` / `persistActiveArtifact` to round-trip citations correctly.
 
 ### Exit criterion
 - [ ] User flow: open app → "New RFC" → paste a real transcript → enter a real repo URL → click Draft → RFC streams in with citation pills that point at valid files/PRs/commits.
