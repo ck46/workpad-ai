@@ -138,7 +138,7 @@ def get_artifact(artifact_id: str):
     with session_factory() as session:
         try:
             artifact = get_artifact_or_404(session, artifact_id)
-            return serialize_artifact(artifact)
+            return serialize_artifact(artifact, session)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

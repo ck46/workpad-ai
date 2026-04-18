@@ -78,7 +78,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [x] Error events for: repo unreachable, invalid PAT, transcript missing, model failure.
 
 ### Extend existing endpoints
-- [ ] `GET /api/artifacts/{id}` returns citations inline.
+- [x] `GET /api/artifacts/{id}` returns citations inline.
 - [ ] `GET /api/conversations/{id}` returns `spec_type` for each artifact.
 
 ### Frontend: new-spec modal

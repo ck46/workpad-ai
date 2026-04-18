@@ -56,6 +56,7 @@ class ArtifactRead(BaseModel):
     content_type: ContentType
     version: int
     updated_at: datetime
+    citations: list[CitationRead] = []
 
 
 class ConversationSummary(BaseModel):

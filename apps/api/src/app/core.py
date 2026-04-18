@@ -22,7 +22,7 @@ from reportlab.platypus import Paragraph, Preformatted, SimpleDocTemplate, Space
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
-from .schemas import ArtifactRead, ArtifactUpdateRequest, CanvasToolCall, ContentType, ConversationDetail, ConversationSummary, MessageRead
+from .schemas import ArtifactRead, ArtifactUpdateRequest, CanvasToolCall, CitationRead, ContentType, ConversationDetail, ConversationSummary, MessageRead
 
 
 def utcnow() -> datetime:
@@ -236,7 +236,26 @@ def serialize_message(message: Message) -> MessageRead:
     )
 
 
-def serialize_artifact(artifact: Artifact) -> ArtifactRead:
+def serialize_citation(citation: Citation) -> CitationRead:
+    return CitationRead(
+        id=citation.id,
+        artifact_id=citation.artifact_id,
+        anchor=citation.anchor,
+        kind=citation.kind,
+        target=citation.target or {},
+        resolved_state=citation.resolved_state,
+        last_checked_at=citation.last_checked_at,
+        last_observed=citation.last_observed,
+    )
+
+
+def serialize_artifact(artifact: Artifact, session: Session | None = None) -> ArtifactRead:
+    citations: list[CitationRead] = []
+    if session is not None:
+        rows = session.scalars(
+            select(Citation).where(Citation.artifact_id == artifact.id).order_by(Citation.created_at.asc())
+        ).all()
+        citations = [serialize_citation(row) for row in rows]
     return ArtifactRead(
         id=artifact.id,
         conversation_id=artifact.conversation_id,
@@ -245,6 +264,7 @@ def serialize_artifact(artifact: Artifact) -> ArtifactRead:
         content_type=artifact.content_type,
         version=artifact.version,
         updated_at=artifact.updated_at,
+        citations=citations,
     )
 
 
