@@ -156,7 +156,7 @@ Make the 60-second demo tight.
 ### Backend
 - [x] `GET /api/citations/{id}/preview` — returns current content around the target (with a small context window).
 - [x] `GET /api/citations/{id}/diff` — for stale citations, returns unified diff between draft-time and current content.
-- [ ] Update markdown export (`core.py::export_artifact`) to render citation pills as footnotes: `content[^cite-a3f9]` with a `[^cite-a3f9]: path/file.ts L42-58 (https://github.com/...)` footer.
+- [x] Update markdown export (`core.py::export_artifact`) to render citation pills as footnotes: `content[^cite-a3f9]` with a `[^cite-a3f9]: path/file.ts L42-58 (https://github.com/...)` footer.
 - [ ] Ensure HTML / DOCX / PDF exports include citation links too (adapt `_iter_markdown_blocks` or post-process).
 - [ ] Add graceful errors for: repo unreachable (403/404), expired PAT (401), file 404 at HEAD.
 

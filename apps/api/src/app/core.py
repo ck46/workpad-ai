@@ -571,11 +571,11 @@ def _iter_markdown_blocks(content: str) -> list[tuple[str, str]]:
     return [block for block in blocks if block[0] != "spacer" or block[1]]
 
 
-def _build_docx_bytes(artifact: Artifact) -> bytes:
+def _build_docx_bytes(artifact: Artifact, body: str | None = None) -> bytes:
     document = Document()
     document.add_heading(artifact.title, level=0)
 
-    for kind, text in _iter_markdown_blocks(artifact.content):
+    for kind, text in _iter_markdown_blocks(body if body is not None else artifact.content):
         if kind.startswith("heading_"):
             level = int(kind.rsplit("_", 1)[1])
             document.add_heading(text, level=level)
@@ -600,7 +600,7 @@ def _build_docx_bytes(artifact: Artifact) -> bytes:
     return output.getvalue()
 
 
-def _build_pdf_bytes(artifact: Artifact) -> bytes:
+def _build_pdf_bytes(artifact: Artifact, body: str | None = None) -> bytes:
     output = BytesIO()
     document = SimpleDocTemplate(
         output,
@@ -631,7 +631,7 @@ def _build_pdf_bytes(artifact: Artifact) -> bytes:
 
     story = [Paragraph(artifact.title, styles["Title"]), Spacer(1, 0.2 * inch)]
 
-    for kind, text in _iter_markdown_blocks(artifact.content):
+    for kind, text in _iter_markdown_blocks(body if body is not None else artifact.content):
         if kind in heading_styles:
             story.append(Paragraph(text, heading_styles[kind]))
         elif kind == "bullet":
@@ -648,22 +648,142 @@ def _build_pdf_bytes(artifact: Artifact) -> bytes:
     return output.getvalue()
 
 
+_CITATION_TOKEN_RE = re.compile(r"\[\[cite:([a-z0-9_-]{2,32})\]\]", re.IGNORECASE)
+
+
+def _citation_footnote_id(anchor: str) -> str:
+    return f"cite-{anchor.lower()}"
+
+
+def _citation_github_url(citation: Citation) -> str | None:
+    target = citation.target or {}
+    observed = citation.last_observed or {}
+    kind = citation.kind
+    if kind == "repo_range":
+        repo = str(target.get("repo") or "")
+        path = str(target.get("path") or "")
+        ref = str(observed.get("at_ref") or target.get("ref_at_draft") or "")
+        suggested = observed.get("suggested_range") if isinstance(observed.get("suggested_range"), dict) else None
+        ls = (suggested or {}).get("line_start") or target.get("line_start")
+        le = (suggested or {}).get("line_end") or target.get("line_end")
+        if not (repo and path and ref):
+            return None
+        anchor_frag = f"#L{ls}-L{le}" if ls and le else ""
+        return f"https://github.com/{repo}/blob/{ref}/{path}{anchor_frag}"
+    if kind == "repo_pr":
+        url = observed.get("html_url")
+        if isinstance(url, str) and url:
+            return url
+        repo = str(target.get("repo") or "")
+        number = target.get("number")
+        if repo and isinstance(number, int):
+            return f"https://github.com/{repo}/pull/{number}"
+    if kind == "repo_commit":
+        url = observed.get("html_url")
+        if isinstance(url, str) and url:
+            return url
+        repo = str(target.get("repo") or "")
+        sha = str(target.get("sha") or "")
+        if repo and sha:
+            return f"https://github.com/{repo}/commit/{sha}"
+    return None
+
+
+def _citation_footnote_label(citation: Citation) -> str:
+    target = citation.target or {}
+    kind = citation.kind
+    if kind == "repo_range":
+        repo = str(target.get("repo") or "")
+        path = str(target.get("path") or "")
+        ls = target.get("line_start")
+        le = target.get("line_end")
+        suffix = f"#L{ls}-L{le}" if isinstance(ls, int) and isinstance(le, int) else ""
+        return f"{repo} · {path}{suffix}".strip(" ·")
+    if kind == "repo_pr":
+        repo = str(target.get("repo") or "")
+        number = target.get("number")
+        title = str(target.get("title_at_draft") or "")
+        return f"{repo} · PR #{number} {title}".rstrip()
+    if kind == "repo_commit":
+        repo = str(target.get("repo") or "")
+        sha = str(target.get("sha") or "")
+        return f"{repo} · commit {sha[:7]}"
+    if kind == "transcript_range":
+        start = str(target.get("start") or "")
+        end = str(target.get("end") or "")
+        return f"transcript {start}–{end}".strip("–")
+    return citation.anchor
+
+
+def _render_markdown_with_footnotes(
+    content: str, citations_by_anchor: dict[str, Citation]
+) -> str:
+    """Rewrite [[cite:<anchor>]] tokens as pandoc footnote refs + emit a footer.
+
+    Anchors that don't match a Citation row are left untouched so the raw
+    token survives; missing metadata never silently rewrites content.
+    """
+
+    if not citations_by_anchor:
+        return content
+
+    used: list[str] = []
+    seen: set[str] = set()
+
+    def _replace(match: re.Match[str]) -> str:
+        anchor = match.group(1).lower()
+        if anchor not in citations_by_anchor:
+            return match.group(0)
+        if anchor not in seen:
+            used.append(anchor)
+            seen.add(anchor)
+        return f"[^{_citation_footnote_id(anchor)}]"
+
+    rewritten = _CITATION_TOKEN_RE.sub(_replace, content)
+    if not used:
+        return content
+
+    footnotes = ["\n\n---\n"]
+    for anchor in used:
+        citation = citations_by_anchor[anchor]
+        label = _citation_footnote_label(citation)
+        url = _citation_github_url(citation)
+        line = f"[^{_citation_footnote_id(anchor)}]: {label}"
+        if url:
+            line += f" <{url}>"
+        footnotes.append(line)
+    return rewritten + "\n".join(footnotes) + "\n"
+
+
 def export_artifact(session: Session, artifact_id: str, export_format: str) -> tuple[bytes | str, str, str]:
     artifact = get_artifact_or_404(session, artifact_id)
     safe_name = _safe_filename(artifact.title)
+
+    citations_by_anchor: dict[str, Citation] = {}
+    if artifact.spec_type and artifact.content_type == ContentType.MARKDOWN.value:
+        citation_rows = session.scalars(
+            select(Citation).where(Citation.artifact_id == artifact.id)
+        ).all()
+        citations_by_anchor = {row.anchor: row for row in citation_rows}
+
+    if artifact.content_type == ContentType.MARKDOWN.value and citations_by_anchor:
+        markdown_body = _render_markdown_with_footnotes(artifact.content, citations_by_anchor)
+    else:
+        markdown_body = artifact.content
+
     if export_format == "html":
         if artifact.content_type == ContentType.MARKDOWN.value:
-            body = markdown(artifact.content, extensions=["fenced_code", "tables"])
+            body = markdown(markdown_body, extensions=["fenced_code", "tables", "footnotes"])
         else:
             body = f"<pre>{html_escape(artifact.content)}</pre>"
         return body, "text/html; charset=utf-8", f"{safe_name}.html"
     if export_format == "text":
-        return artifact.content, "text/plain; charset=utf-8", f"{safe_name}.txt"
+        return markdown_body, "text/plain; charset=utf-8", f"{safe_name}.txt"
     if export_format == "docx":
-        return _build_docx_bytes(artifact), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", f"{safe_name}.docx"
+        return _build_docx_bytes(artifact, markdown_body), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", f"{safe_name}.docx"
     if export_format == "pdf":
-        return _build_pdf_bytes(artifact), "application/pdf", f"{safe_name}.pdf"
-    return artifact.content, "text/markdown; charset=utf-8", f"{safe_name}.md"
+        return _build_pdf_bytes(artifact, markdown_body), "application/pdf", f"{safe_name}.pdf"
+    return markdown_body, "text/markdown; charset=utf-8", f"{safe_name}.md"
 
 
 def current_artifact_id_from_payload(payload: Any) -> str | None:
