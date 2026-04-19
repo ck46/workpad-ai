@@ -3241,6 +3241,8 @@ function DraftProgress() {
   );
 }
 
+type SettingsInfo = { has_github_default_token: boolean; has_openai_api_key: boolean };
+
 function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const draft = useWorkbenchStore((state) => state.draft);
   const draftSpec = useWorkbenchStore((state) => state.draftSpec);
@@ -3252,6 +3254,7 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
   const [githubToken, setGithubToken] = useState("");
   const [attachToConversation, setAttachToConversation] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [settingsInfo, setSettingsInfo] = useState<SettingsInfo | null>(null);
 
   const isBusy = draft.phase === "pass1" || draft.phase === "pass2" || draft.phase === "finalizing";
 
@@ -3259,7 +3262,20 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
     if (!open) {
       setLocalError(null);
       resetDraft();
+      return;
     }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const info = await requestJson<SettingsInfo>("/api/settings/info");
+        if (!cancelled) setSettingsInfo(info);
+      } catch {
+        if (!cancelled) setSettingsInfo(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [open, resetDraft]);
 
   useEffect(() => {
@@ -3348,6 +3364,26 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
             ) : null}
           </div>
         )}
+
+        {settingsInfo && !settingsInfo.has_github_default_token && !githubToken.trim() ? (
+          <div className="mt-5 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            <div className="font-medium">No GitHub token on the server.</div>
+            <p className="mt-1 text-xs text-amber-100/90">
+              Either paste a PAT below (kept for this request only) or set{" "}
+              <code className="rounded bg-amber-500/20 px-1 py-0.5">GITHUB_DEFAULT_TOKEN</code>
+              {" "}in <code>.env</code> — see <code>.env.example</code>. The token needs{" "}
+              <code className="rounded bg-amber-500/20 px-1 py-0.5">repo:read</code> scope.
+            </p>
+          </div>
+        ) : null}
+        {settingsInfo && !settingsInfo.has_openai_api_key ? (
+          <div className="mt-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+            <div className="font-medium">OPENAI_API_KEY is not set.</div>
+            <p className="mt-1 text-xs text-rose-100/90">
+              The drafter needs an OpenAI key. Add it to <code>.env</code> and restart the API.
+            </p>
+          </div>
+        ) : null}
 
         <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
           <div>

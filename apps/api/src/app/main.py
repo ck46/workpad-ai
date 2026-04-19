@@ -68,6 +68,15 @@ def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get(f"{settings.api_prefix}/settings/info")
+def settings_info() -> dict[str, bool]:
+    current = get_settings()
+    return {
+        "has_github_default_token": bool(current.github_default_token),
+        "has_openai_api_key": bool(current.openai_api_key),
+    }
+
+
 @app.get(f"{settings.api_prefix}/models", response_model=list[ModelInfo])
 def list_models():
     return workpad_service.available_models()
