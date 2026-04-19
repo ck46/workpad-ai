@@ -22,6 +22,7 @@ from .core import (
     update_artifact_manually,
 )
 from .chat_service import WorkpadChatService
+from .github_client import GitHubAuthError, GitHubClientError
 from .schemas import (
     ArtifactUpdateRequest,
     ChatRequest,
@@ -32,14 +33,16 @@ from .schemas import (
     ModelInfo,
     RegenerateRequest,
     SpecDraftRequest,
+    VerifyCitationsResult,
 )
-from .spec_service import SpecDraftService
+from .spec_service import CitationVerifyService, SpecDraftService
 
 
 settings = get_settings()
 session_factory = get_session_factory()
 workpad_service = WorkpadChatService()
 spec_draft_service = SpecDraftService()
+citation_verify_service = CitationVerifyService()
 
 
 @asynccontextmanager
@@ -197,4 +200,30 @@ def draft_spec(payload: SpecDraftRequest):
         spec_draft_service.stream_draft(payload),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
+    )
+
+
+@app.post(
+    f"{settings.api_prefix}/artifacts/{{artifact_id}}/verify-citations",
+    response_model=VerifyCitationsResult,
+)
+def verify_artifact_citations(artifact_id: str):
+    try:
+        result = citation_verify_service.verify(artifact_id)
+    except GitHubAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except GitHubClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # Reload citations so last_observed/last_checked_at reflect the just-written
+    # values (the in-memory outcomes only carry state, not DB-assigned timestamps).
+    citations = citation_verify_service.serialize_citations(artifact_id)
+    return VerifyCitationsResult(
+        artifact_id=artifact_id,
+        counts=result.counts_by_state(),
+        truncated=result.truncated,
+        remaining=result.remaining,
+        citations=citations,
     )

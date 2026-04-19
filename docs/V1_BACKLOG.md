@@ -122,8 +122,8 @@ The "living" half of the wedge. Make stale spec obvious.
 - [ ] Persist updated `resolved_state`, `last_checked_at`, `last_observed`.
 
 ### Verify endpoint
-- [ ] Add `POST /api/artifacts/{id}/verify-citations` route.
-- [ ] Returns updated citations (full `CitationRead` list) + summary: `{ live, stale, missing }` counts.
+- [x] Add `POST /api/artifacts/{id}/verify-citations` route.
+- [x] Returns updated citations (full `CitationRead` list) + summary: `{ live, stale, missing }` counts.
 - [ ] Optional query param `force=true` to bypass same-minute dedupe.
 
 ### Frontend: citation status

@@ -14,8 +14,10 @@ from collections.abc import Iterator
 from typing import Any
 
 from openai import OpenAI
+from sqlalchemy import select
 
-from .core import get_session_factory, get_settings
+from .citation_verifier import CitationVerifier, VerifyResult
+from .core import Citation, get_artifact_or_404, get_session_factory, get_settings, serialize_citation
 from .github_client import (
     CachedGitHubReader,
     GitHubAuthError,
@@ -170,3 +172,46 @@ class SpecDraftService:
             model=self._settings.default_model,
         )
         return drafter, github_client
+
+
+class CitationVerifyService:
+    """Runs a verify pass for an existing artifact."""
+
+    def __init__(self) -> None:
+        self._settings = get_settings()
+        self._session_factory = get_session_factory()
+
+    def verify(self, artifact_id: str) -> VerifyResult:
+        token = self._settings.github_default_token
+        if not token:
+            raise GitHubAuthError(
+                "No GitHub token available. Set GITHUB_DEFAULT_TOKEN to verify citations."
+            )
+
+        github_client = GitHubClient(token)
+        try:
+            reader = CachedGitHubReader(github_client, self._session_factory)
+            verifier = CitationVerifier(github_reader=reader)
+
+            with self._session_factory() as session:
+                # Existence check raises ValueError (-> 404) when the id is unknown.
+                get_artifact_or_404(session, artifact_id)
+                citations = session.scalars(
+                    select(Citation)
+                    .where(Citation.artifact_id == artifact_id)
+                    .order_by(Citation.created_at.asc())
+                ).all()
+                return verifier.verify(
+                    artifact_id=artifact_id, citations=citations, session=session
+                )
+        finally:
+            github_client.close()
+
+    def serialize_citations(self, artifact_id: str) -> list:
+        with self._session_factory() as session:
+            rows = session.scalars(
+                select(Citation)
+                .where(Citation.artifact_id == artifact_id)
+                .order_by(Citation.created_at.asc())
+            ).all()
+            return [serialize_citation(row) for row in rows]

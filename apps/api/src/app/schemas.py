@@ -178,3 +178,11 @@ class SpecDraftResult(BaseModel):
     picked_paths: list[str]
     citation_count: int
     dropped_count: int
+
+
+class VerifyCitationsResult(BaseModel):
+    artifact_id: str
+    counts: dict[str, int]
+    truncated: bool
+    remaining: int
+    citations: list[CitationRead]
