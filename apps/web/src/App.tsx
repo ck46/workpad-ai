@@ -1468,6 +1468,130 @@ function useCitationPreview(citationId: string | null | undefined, enabled: bool
   return state;
 }
 
+type DiffData = {
+  citation_id: string;
+  kind: "repo_range";
+  path: string;
+  pinned_ref: string;
+  head_ref: string;
+  pinned_range: { line_start: number; line_end: number };
+  head_range: { line_start: number; line_end: number };
+  pinned_lines: { line: number; text: string }[];
+  head_lines: { line: number; text: string }[];
+  unified_diff: string;
+};
+
+const citationDiffCache = new Map<string, DiffData>();
+const citationDiffInflight = new Map<string, Promise<DiffData | null>>();
+
+async function fetchCitationDiff(citationId: string): Promise<DiffData | null> {
+  const cached = citationDiffCache.get(citationId);
+  if (cached) return cached;
+  const inflight = citationDiffInflight.get(citationId);
+  if (inflight) return inflight;
+  const promise = (async () => {
+    try {
+      const data = await requestJson<DiffData>(`/api/citations/${citationId}/diff`);
+      citationDiffCache.set(citationId, data);
+      return data;
+    } catch {
+      return null;
+    } finally {
+      citationDiffInflight.delete(citationId);
+    }
+  })();
+  citationDiffInflight.set(citationId, promise);
+  return promise;
+}
+
+function CitationDiffPane({ citationId }: { citationId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [state, setState] = useState<{
+    data: DiffData | null;
+    loading: boolean;
+    error: string | null;
+  }>({ data: null, loading: false, error: null });
+
+  useEffect(() => {
+    if (!expanded) return;
+    const cached = citationDiffCache.get(citationId);
+    if (cached) {
+      setState({ data: cached, loading: false, error: null });
+      return;
+    }
+    let cancelled = false;
+    setState({ data: null, loading: true, error: null });
+    fetchCitationDiff(citationId)
+      .then((data) => {
+        if (cancelled) return;
+        if (data) {
+          setState({ data, loading: false, error: null });
+        } else {
+          setState({ data: null, loading: false, error: "Diff unavailable." });
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setState({
+          data: null,
+          loading: false,
+          error: error instanceof Error ? error.message : "Diff failed.",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, citationId]);
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="inline-flex items-center gap-1 rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-100 hover:border-amber-300/40 hover:bg-amber-500/20"
+      >
+        <ChevronDown
+          size={12}
+          className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+        {expanded ? "Hide diff" : "View diff"}
+      </button>
+      {expanded ? (
+        <div className="mt-2 rounded-xl border border-white/10 bg-black/40 p-2">
+          {state.loading ? (
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <LoaderCircle size={12} className="animate-spin" /> Loading diff…
+            </div>
+          ) : state.error ? (
+            <div className="text-xs text-rose-200">{state.error}</div>
+          ) : state.data && state.data.unified_diff ? (
+            <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px]">
+              {state.data.unified_diff.split("\n").map((line, index) => {
+                const color = line.startsWith("+")
+                  ? "text-emerald-200"
+                  : line.startsWith("-")
+                    ? "text-rose-200"
+                    : line.startsWith("@@")
+                      ? "text-sky-200"
+                      : "text-slate-300";
+                return (
+                  <div key={index} className={color}>
+                    {line || " "}
+                  </div>
+                );
+              })}
+            </pre>
+          ) : (
+            <div className="text-xs text-slate-400">
+              No textual diff produced (content moved but slice is identical).
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CitationPreviewPane({ citationId }: { citationId: string }) {
   const { data, loading, error } = useCitationPreview(citationId, true);
 
@@ -1623,6 +1747,9 @@ function CitationPopover({
             <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
               Content moved to lines {suggested.line_start}–{suggested.line_end}.
             </div>
+          ) : null}
+          {state === "stale" && citation.kind === "repo_range" ? (
+            <CitationDiffPane citationId={citation.id} />
           ) : null}
           {state === "missing" ? (
             <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">

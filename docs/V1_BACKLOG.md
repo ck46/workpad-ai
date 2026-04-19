@@ -162,7 +162,7 @@ Make the 60-second demo tight.
 
 ### Frontend
 - [x] Citation hover preview (200ms debounce; fetch via `/preview`; cache in session).
-- [ ] Stale citation diff view (collapsed by default; expand on click).
+- [x] Stale citation diff view (collapsed by default; expand on click).
 - [ ] Error toasts for repo / auth failures during draft and verify.
 - [ ] Empty-state for new-spec modal if `GITHUB_DEFAULT_TOKEN` is missing: link to setup instructions.
 - [ ] Polish: loading skeletons for citations while draft streams.
