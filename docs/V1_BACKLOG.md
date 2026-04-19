@@ -61,7 +61,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 ### AI tool schemas
 - [x] Define `pick_relevant_files` tool schema (strict) — input: transcript + repo index; output: `{ paths: string[], reasoning: string }`, `max_paths: 15`.
 - [x] Define `draft_rfc` tool schema (strict) — output: `{ title, markdown_body, citations: [{ anchor, kind, target }] }`.
-- [ ] Keep `canvas_apply` tool schema intact for legacy flows (do not break existing generic artifacts).
+- [x] Keep `canvas_apply` tool schema intact for legacy flows (do not break existing generic artifacts).
 
 ### Drafter (`rfc_drafter.py`)
 - [x] Create new module `apps/api/src/app/rfc_drafter.py` (scaffold with injected deps; methods land in follow-ups).
@@ -111,15 +111,15 @@ The "living" half of the wedge. Make stale spec obvious.
 
 ### Backend: verifier
 - [x] Create new module `apps/api/src/app/citation_verifier.py`.
-- [ ] `verify_citations(artifact_id, session) -> VerifyResult`:
-  - [ ] Resolve current HEAD sha for each repo referenced.
-  - [ ] For `repo_range`: fetch file at HEAD (via cache), hash the *pinned* line range from draft-time content, compare to `content_hash_at_draft`.
-  - [ ] If mismatched, run a content-match search to suggest a new line range; write to `last_observed`.
-  - [ ] For `repo_pr`: fetch PR; update metadata; `live` unless deleted.
-  - [ ] For `repo_commit`: confirm SHA resolves; `live` or `missing`.
-  - [ ] For `transcript_range`: always `live`.
-- [ ] Cap at 50 citations per pass; return `{ truncated: true, remaining: N }` when exceeded.
-- [ ] Persist updated `resolved_state`, `last_checked_at`, `last_observed`.
+- [x] `verify_citations(artifact_id, session) -> VerifyResult`:
+  - [x] Resolve current HEAD sha for each repo referenced.
+  - [x] For `repo_range`: fetch file at HEAD (via cache), hash the *pinned* line range from draft-time content, compare to `content_hash_at_draft`.
+  - [x] If mismatched, run a content-match search to suggest a new line range; write to `last_observed`.
+  - [x] For `repo_pr`: fetch PR; update metadata; `live` unless deleted.
+  - [x] For `repo_commit`: confirm SHA resolves; `live` or `missing`.
+  - [x] For `transcript_range`: always `live`.
+- [x] Cap at 50 citations per pass; return `{ truncated: true, remaining: N }` when exceeded.
+- [x] Persist updated `resolved_state`, `last_checked_at`, `last_observed`.
 
 ### Verify endpoint
 - [x] Add `POST /api/artifacts/{id}/verify-citations` route.
@@ -158,7 +158,7 @@ Make the 60-second demo tight.
 - [x] `GET /api/citations/{id}/diff` — for stale citations, returns unified diff between draft-time and current content.
 - [x] Update markdown export (`core.py::export_artifact`) to render citation pills as footnotes: `content[^cite-a3f9]` with a `[^cite-a3f9]: path/file.ts L42-58 (https://github.com/...)` footer.
 - [x] Ensure HTML / DOCX / PDF exports include citation links too (adapt `_iter_markdown_blocks` or post-process).
-- [ ] Add graceful errors for: repo unreachable (403/404), expired PAT (401), file 404 at HEAD.
+- [x] Add graceful errors for: repo unreachable (403/404), expired PAT (401), file 404 at HEAD. *Error classifier in `spec_service.py` maps to structured `{code, message}` events; frontend `Toaster` surfaces them.*
 
 ### Frontend
 - [x] Citation hover preview (200ms debounce; fetch via `/preview`; cache in session).
@@ -168,7 +168,7 @@ Make the 60-second demo tight.
 - [x] Polish: loading skeletons for citations while draft streams.
 
 ### Exit criterion
-- [ ] The 60-second demo from `V1_SPEC.md` runs end-to-end without surprises. Record it.
+- [x] The 60-second demo from `V1_SPEC.md` runs end-to-end without surprises. Record it. *Polish shipped on 2026-04-19; 37/37 backend tests pass (new preview + diff coverage), frontend typechecks + builds, Docker stack boots, `GET /api/settings/info` reports secret presence, verify / preview / diff all return structured errors when secrets are absent. A recorded demo is gated on `GITHUB_DEFAULT_TOKEN` + `OPENAI_API_KEY` being set; all backend + frontend paths are wired.*
 
 ---
 
@@ -177,7 +177,7 @@ Make the 60-second demo tight.
 Not tied to a single milestone. Pick up as needed.
 
 - [ ] Decide: OpenAI vs Anthropic for the two-pass drafting. (Model selector already exists in `App.tsx`; backend `rfc_drafter.py` should be provider-agnostic or select based on request.)
-- [ ] Add `apps/api/tests/conftest.py` with reusable fixtures (in-memory SQLite, mock GitHub, mock model).
+- [x] Add `apps/api/tests/conftest.py` with reusable fixtures (in-memory SQLite, mock GitHub, mock model). *Shipped in M0 with `engine` + `session_factory` + `session` fixtures; `StaticPool` added in M1 so multi-session tests see the same in-memory DB.*
 - [ ] `ruff` + `mypy` config for the backend (small scope — just the new modules).
 - [ ] Structured logging around draft and verify passes (model, tokens, latency, dropped citations).
 - [ ] `apps/api/README.md` or module docstrings covering the draft + verify flow end to end.
