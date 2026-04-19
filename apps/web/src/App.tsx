@@ -1384,6 +1384,150 @@ function githubUrlForCitation(citation: Citation): string | null {
   }
 }
 
+type PreviewLine = { line: number; text: string; highlighted: boolean };
+type PreviewData =
+  | {
+      kind: "repo_range";
+      at_ref: string;
+      path: string;
+      target_start: number;
+      target_end: number;
+      context_start: number;
+      context_end: number;
+      lines: PreviewLine[];
+    }
+  | { kind: "repo_pr"; repo: string; number: number; title: string; state: string; merged: boolean; html_url: string }
+  | { kind: "repo_commit"; repo: string; sha: string; message: string; html_url: string }
+  | { kind: "transcript_range"; start: string | null; end: string | null };
+
+// Session-level cache so reopening a popover doesn't refetch and repeated
+// hovers across the same spec are instant. Cleared on reload by design.
+const citationPreviewCache = new Map<string, PreviewData>();
+const citationPreviewInflight = new Map<string, Promise<PreviewData | null>>();
+
+async function fetchCitationPreview(citationId: string): Promise<PreviewData | null> {
+  const cached = citationPreviewCache.get(citationId);
+  if (cached) return cached;
+  const inflight = citationPreviewInflight.get(citationId);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    try {
+      const data = await requestJson<PreviewData>(`/api/citations/${citationId}/preview`);
+      citationPreviewCache.set(citationId, data);
+      return data;
+    } catch {
+      return null;
+    } finally {
+      citationPreviewInflight.delete(citationId);
+    }
+  })();
+
+  citationPreviewInflight.set(citationId, promise);
+  return promise;
+}
+
+function useCitationPreview(citationId: string | null | undefined, enabled: boolean) {
+  const [state, setState] = useState<{
+    data: PreviewData | null;
+    loading: boolean;
+    error: string | null;
+  }>({ data: null, loading: false, error: null });
+
+  useEffect(() => {
+    if (!enabled || !citationId) return;
+    const cached = citationPreviewCache.get(citationId);
+    if (cached) {
+      setState({ data: cached, loading: false, error: null });
+      return;
+    }
+    let cancelled = false;
+    setState({ data: null, loading: true, error: null });
+    fetchCitationPreview(citationId)
+      .then((data) => {
+        if (cancelled) return;
+        if (data) {
+          setState({ data, loading: false, error: null });
+        } else {
+          setState({ data: null, loading: false, error: "Preview unavailable." });
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setState({
+          data: null,
+          loading: false,
+          error: error instanceof Error ? error.message : "Preview failed.",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, citationId]);
+
+  return state;
+}
+
+function CitationPreviewPane({ citationId }: { citationId: string }) {
+  const { data, loading, error } = useCitationPreview(citationId, true);
+
+  if (loading) {
+    return (
+      <div className="mt-3 flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-400">
+        <LoaderCircle size={12} className="animate-spin" /> Loading preview…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="mt-3 rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+        {error}
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  if (data.kind === "repo_range") {
+    return (
+      <div className="mt-3 rounded-xl border border-white/10 bg-black/40 p-2 font-mono text-[11px] text-slate-200">
+        {data.lines.map((line) => (
+          <div
+            key={line.line}
+            className={`flex gap-3 ${
+              line.highlighted ? "bg-sky-400/10 text-sky-50" : ""
+            }`}
+          >
+            <span className="w-8 flex-none text-right text-slate-500">{line.line}</span>
+            <span className="whitespace-pre-wrap break-all">{line.text || " "}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (data.kind === "repo_pr") {
+    return (
+      <div className="mt-3 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-200">
+        <div className="text-[11px] text-slate-400">
+          {data.repo} · {data.state}
+          {data.merged ? " · merged" : ""}
+        </div>
+        <div className="mt-1 font-medium text-slate-100">{data.title}</div>
+      </div>
+    );
+  }
+  if (data.kind === "repo_commit") {
+    return (
+      <div className="mt-3 rounded-xl border border-white/10 bg-black/30 px-3 py-2 font-mono text-[11px] text-slate-200">
+        <div className="text-slate-400">
+          {data.repo} · {data.sha.slice(0, 7)}
+        </div>
+        <pre className="mt-1 whitespace-pre-wrap break-all text-slate-100">{data.message}</pre>
+      </div>
+    );
+  }
+  return null;
+}
+
 function stateLabel(state: ResolvedState | null): string {
   switch (state) {
     case "live":
@@ -1484,7 +1628,9 @@ function CitationPopover({
             <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
               Target no longer resolves on GitHub.
             </div>
-          ) : null}
+          ) : (
+            <CitationPreviewPane citationId={citation.id} />
+          )}
           <div className="mt-4 flex items-center justify-between">
             <span className="text-[11px] text-slate-500">anchor: {anchor}</span>
             {url ? (
@@ -1521,6 +1667,7 @@ function CitationPill({ node }: NodeViewProps) {
     state.activeArtifact?.citations?.find((item) => item.anchor === anchor) ?? null,
   );
   const [open, setOpen] = useState(false);
+  const hoverTimerRef = useRef<number | null>(null);
 
   const label = citationPillLabel(citation, anchor);
   const stateModifier = citationStateModifier(citation?.resolved_state ?? null);
@@ -1530,6 +1677,30 @@ function CitationPill({ node }: NodeViewProps) {
   const title = citation
     ? `${citation.kind}${titleState} · ${label}`
     : `Unresolved citation: ${anchor}`;
+
+  function handlePointerEnter() {
+    if (!citation) return;
+    if (hoverTimerRef.current !== null) return;
+    hoverTimerRef.current = window.setTimeout(() => {
+      void fetchCitationPreview(citation.id);
+      hoverTimerRef.current = null;
+    }, 200);
+  }
+
+  function handlePointerLeave() {
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current !== null) {
+        window.clearTimeout(hoverTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <NodeViewWrapper
@@ -1541,6 +1712,8 @@ function CitationPill({ node }: NodeViewProps) {
       className={`workpad-citation ${stateModifier}`.trim()}
       title={title}
       style={{ position: "relative" }}
+      onMouseEnter={handlePointerEnter}
+      onMouseLeave={handlePointerLeave}
     >
       <button
         type="button"
