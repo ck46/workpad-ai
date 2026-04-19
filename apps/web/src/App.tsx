@@ -2094,6 +2094,93 @@ function MarkdownEditor({
   return <EditorContent editor={editor} />;
 }
 
+function DriftBanner() {
+  const artifact = useWorkbenchStore((state) => state.activeArtifact);
+  const verify = useWorkbenchStore((state) => state.verify);
+  const verifyActiveCitations = useWorkbenchStore((state) => state.verifyActiveCitations);
+
+  if (!artifact || artifact.spec_type !== "rfc") return null;
+  const citations = artifact.citations ?? [];
+  if (citations.length === 0) return null;
+
+  const total = citations.length;
+  const drifted = citations.filter(
+    (c) => c.resolved_state === "stale" || c.resolved_state === "missing",
+  );
+  const unverified = citations.filter((c) => c.resolved_state === "unknown").length;
+
+  if (drifted.length === 0 && unverified === 0 && verify.phase !== "error") {
+    return null;
+  }
+
+  const firstDrifted = drifted[0];
+  const shaShort = firstDrifted
+    ? String((firstDrifted.target as Record<string, unknown>)?.ref_at_draft ?? "")
+        .slice(0, 7)
+    : "";
+
+  return (
+    <div className="border-b border-amber-300/20 bg-amber-500/10 px-5 py-3 text-xs text-amber-100">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {verify.phase === "error" ? (
+            <>
+              <RefreshCcw size={14} className="text-rose-300" />
+              <span>
+                Couldn't verify citations:{" "}
+                <span className="font-medium text-rose-100">
+                  {verify.error?.message ?? "unknown error"}
+                </span>
+              </span>
+            </>
+          ) : drifted.length > 0 ? (
+            <>
+              <RefreshCcw size={14} />
+              <span>
+                <button
+                  type="button"
+                  onClick={() => scrollToFirstDriftedCitation()}
+                  className="mr-1 font-semibold text-amber-50 underline-offset-2 hover:underline"
+                >
+                  {drifted.length}
+                </button>{" "}
+                of {total} citations have drifted
+                {shaShort ? <> since draft at <code>{shaShort}</code></> : null}.
+              </span>
+            </>
+          ) : (
+            <>
+              <LoaderCircle size={14} className="animate-spin" />
+              <span>{unverified} citations are unverified.</span>
+            </>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => void verifyActiveCitations({ force: true })}
+          disabled={verify.phase === "verifying"}
+          className="inline-flex items-center gap-1 rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1 text-[11px] text-amber-50 transition hover:border-amber-300/50 hover:bg-amber-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {verify.phase === "verifying" ? (
+            <LoaderCircle size={12} className="animate-spin" />
+          ) : (
+            <RefreshCcw size={12} />
+          )}
+          Verify again
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function scrollToFirstDriftedCitation(): void {
+  const target = document.querySelector<HTMLElement>(
+    '.workpad-citation[data-state="stale"], .workpad-citation[data-state="missing"]',
+  );
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
 function WorkpadPane() {
   const artifact = useWorkbenchStore((state) => state.activeArtifact);
   const setContent = useWorkbenchStore((state) => state.setActiveArtifactContent);
@@ -2392,6 +2479,7 @@ function WorkpadPane() {
           </div>
         </div>
       </div>
+      <DriftBanner />
       <div className="flex-1 overflow-auto p-5">
         {artifact.content_type === "markdown" ? (
           isPreviewing ? (

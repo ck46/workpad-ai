@@ -135,9 +135,9 @@ The "living" half of the wedge. Make stale spec obvious.
   - [x] "View in GitHub" link.
 
 ### Frontend: drift banner
-- [ ] Banner component at the top of `WorkpadPane` when any citation is stale/missing.
-- [ ] Text: `"N of M citations have drifted since draft at <sha[:7]>"`.
-- [ ] Clicking the banner scrolls to the first stale citation.
+- [x] Banner component at the top of `WorkpadPane` when any citation is stale/missing.
+- [x] Text: `"N of M citations have drifted since draft at <sha[:7]>"`.
+- [x] Clicking the banner scrolls to the first stale citation.
 
 ### Frontend: verify trigger
 - [x] Auto-verify on spec open (once per session; dedupe by artifact id).
