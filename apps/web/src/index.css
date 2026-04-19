@@ -167,6 +167,34 @@ body::before {
   @apply text-rose-200;
 }
 
+@keyframes workpad-citation-pulse {
+  0%, 100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.workpad-citation--pulsing {
+  animation: workpad-citation-pulse 1.6s ease-in-out infinite;
+}
+
+.workpad-citation--skeleton {
+  @apply border-white/10 bg-white/5 text-transparent;
+  animation: workpad-citation-pulse 1.4s ease-in-out infinite;
+}
+
+.workpad-citation--skeleton .workpad-citation__icon,
+.workpad-citation--skeleton .workpad-citation__label {
+  @apply text-transparent;
+}
+
+.workpad-citation--skeleton .workpad-citation__label {
+  @apply rounded bg-white/10;
+  min-width: 4.5rem;
+}
+
 .tiptap-light .workpad-citation {
   @apply border-sky-200 bg-sky-50 text-sky-700;
 }

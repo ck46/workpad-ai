@@ -1911,6 +1911,8 @@ function CitationPill({ node }: NodeViewProps) {
   const citation = useWorkbenchStore((state) =>
     state.activeArtifact?.citations?.find((item) => item.anchor === anchor) ?? null,
   );
+  const verifyPhase = useWorkbenchStore((state) => state.verify.phase);
+  const conversationStatus = useWorkbenchStore((state) => state.status);
   const [open, setOpen] = useState(false);
   const hoverTimerRef = useRef<number | null>(null);
 
@@ -1922,6 +1924,14 @@ function CitationPill({ node }: NodeViewProps) {
   const title = citation
     ? `${citation.kind}${titleState} · ${label}`
     : `Unresolved citation: ${anchor}`;
+  const isConversationLoading = conversationStatus === "loading";
+  const isVerifying = verifyPhase === "verifying";
+  const skeletonModifier =
+    !citation && isConversationLoading
+      ? "workpad-citation--skeleton"
+      : isVerifying
+        ? "workpad-citation--pulsing"
+        : "";
 
   function handlePointerEnter() {
     if (!citation) return;
@@ -1954,7 +1964,7 @@ function CitationPill({ node }: NodeViewProps) {
       draggable={false}
       data-cite={anchor}
       data-state={citation?.resolved_state ?? "unknown"}
-      className={`workpad-citation ${stateModifier}`.trim()}
+      className={`workpad-citation ${stateModifier} ${skeletonModifier}`.trim()}
       title={title}
       style={{ position: "relative" }}
       onMouseEnter={handlePointerEnter}

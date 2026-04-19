@@ -165,7 +165,7 @@ Make the 60-second demo tight.
 - [x] Stale citation diff view (collapsed by default; expand on click).
 - [x] Error toasts for repo / auth failures during draft and verify.
 - [x] Empty-state for new-spec modal if `GITHUB_DEFAULT_TOKEN` is missing: link to setup instructions.
-- [ ] Polish: loading skeletons for citations while draft streams.
+- [x] Polish: loading skeletons for citations while draft streams.
 
 ### Exit criterion
 - [ ] The 60-second demo from `V1_SPEC.md` runs end-to-end without surprises. Record it.
