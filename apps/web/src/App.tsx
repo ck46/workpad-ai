@@ -275,6 +275,15 @@ const INITIAL_VERIFY_STATE: VerifyState = {
   lastRunAt: null,
 };
 
+type ToastKind = "error" | "info" | "success";
+
+type Toast = {
+  id: string;
+  kind: ToastKind;
+  title: string;
+  description?: string;
+};
+
 type VerifyCitationsResponse = {
   artifact_id: string;
   counts: Partial<Record<"live" | "stale" | "missing" | "unknown", number>>;
@@ -334,6 +343,9 @@ type WorkbenchStore = {
   resetDraft: () => void;
   verify: VerifyState;
   verifyActiveCitations: (options?: { force?: boolean }) => Promise<void>;
+  toasts: Toast[];
+  pushToast: (toast: Omit<Toast, "id"> & { id?: string }) => string;
+  dismissToast: (id: string) => void;
 };
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
@@ -1195,6 +1207,31 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       }));
     }
   },
+
+  toasts: [],
+
+  pushToast(toast) {
+    const id = toast.id ?? `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const item: Toast = {
+      id,
+      kind: toast.kind,
+      title: toast.title,
+      description: toast.description,
+    };
+    set((state) => ({
+      toasts: [
+        ...state.toasts.filter((existing) => existing.id !== id),
+        item,
+      ],
+    }));
+    return id;
+  },
+
+  dismissToast(id) {
+    set((state) => ({
+      toasts: state.toasts.filter((toast) => toast.id !== id),
+    }));
+  },
 }));
 
 function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
@@ -1233,6 +1270,87 @@ function useAutosave() {
     }, 900);
     return () => window.clearTimeout(timer);
   }, [artifact?.id, artifact?.title, artifact?.content, artifact?.content_type, artifact?.version, artifact?.dirty, status, persistActiveArtifact]);
+}
+
+function useErrorToasts() {
+  const draftError = useWorkbenchStore((state) => state.draft.error);
+  const verifyError = useWorkbenchStore((state) => state.verify.error);
+  const pushToast = useWorkbenchStore((state) => state.pushToast);
+  const lastDraftRef = useRef<string | null>(null);
+  const lastVerifyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!draftError) {
+      lastDraftRef.current = null;
+      return;
+    }
+    const key = `${draftError.code}::${draftError.message}`;
+    if (lastDraftRef.current === key) return;
+    lastDraftRef.current = key;
+    pushToast({
+      id: "draft-error",
+      kind: "error",
+      title: `Draft failed · ${draftError.code}`,
+      description: draftError.message,
+    });
+  }, [draftError, pushToast]);
+
+  useEffect(() => {
+    if (!verifyError) {
+      lastVerifyRef.current = null;
+      return;
+    }
+    const key = `${verifyError.code}::${verifyError.message}`;
+    if (lastVerifyRef.current === key) return;
+    lastVerifyRef.current = key;
+    pushToast({
+      id: "verify-error",
+      kind: "error",
+      title: `Verify failed · ${verifyError.code}`,
+      description: verifyError.message,
+    });
+  }, [verifyError, pushToast]);
+}
+
+function Toaster() {
+  const toasts = useWorkbenchStore((state) => state.toasts);
+  const dismissToast = useWorkbenchStore((state) => state.dismissToast);
+
+  if (toasts.length === 0) return null;
+
+  return (
+    <div className="pointer-events-none fixed bottom-5 right-5 z-50 flex w-full max-w-sm flex-col gap-2">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          className={`pointer-events-auto rounded-2xl border px-4 py-3 text-sm shadow-panel backdrop-blur-xl ${
+            toast.kind === "error"
+              ? "border-rose-400/30 bg-rose-500/15 text-rose-50"
+              : toast.kind === "success"
+                ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-50"
+                : "border-white/10 bg-chrome-900/90 text-slate-100"
+          }`}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">{toast.title}</div>
+              {toast.description ? (
+                <div className="mt-1 text-xs opacity-80">{toast.description}</div>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => dismissToast(toast.id)}
+              className="-mr-1 -mt-1 rounded-full p-1 opacity-60 transition hover:opacity-100"
+              aria-label="Dismiss"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function useAutoVerifyCitations() {
@@ -3342,6 +3460,7 @@ function App() {
   const [newSpecOpen, setNewSpecOpen] = useState(false);
   useAutosave();
   useAutoVerifyCitations();
+  useErrorToasts();
 
   useEffect(() => {
     void bootstrap();
@@ -3504,6 +3623,7 @@ function App() {
         )}
       </main>
       <NewSpecModal open={newSpecOpen} onClose={() => setNewSpecOpen(false)} />
+      <Toaster />
     </div>
   );
 }
