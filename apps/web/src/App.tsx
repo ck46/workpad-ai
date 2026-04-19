@@ -1235,6 +1235,23 @@ function useAutosave() {
   }, [artifact?.id, artifact?.title, artifact?.content, artifact?.content_type, artifact?.version, artifact?.dirty, status, persistActiveArtifact]);
 }
 
+function useAutoVerifyCitations() {
+  const activeArtifactId = useWorkbenchStore((state) => state.activeArtifact?.id ?? null);
+  const specType = useWorkbenchStore((state) => state.activeArtifact?.spec_type ?? null);
+  const citationCount = useWorkbenchStore(
+    (state) => state.activeArtifact?.citations?.length ?? 0,
+  );
+  const lastVerifiedId = useWorkbenchStore((state) => state.verify.lastArtifactId);
+  const verifyActiveCitations = useWorkbenchStore((state) => state.verifyActiveCitations);
+
+  useEffect(() => {
+    if (!activeArtifactId) return;
+    if (!specType || citationCount === 0) return;
+    if (lastVerifiedId === activeArtifactId) return;
+    void verifyActiveCitations();
+  }, [activeArtifactId, specType, citationCount, lastVerifiedId, verifyActiveCitations]);
+}
+
 function formatTimestamp(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
@@ -1880,6 +1897,8 @@ function WorkpadPane() {
   const setContent = useWorkbenchStore((state) => state.setActiveArtifactContent);
   const setTitle = useWorkbenchStore((state) => state.setActiveArtifactTitle);
   const refreshActiveArtifact = useWorkbenchStore((state) => state.refreshActiveArtifact);
+  const verify = useWorkbenchStore((state) => state.verify);
+  const verifyActiveCitations = useWorkbenchStore((state) => state.verifyActiveCitations);
   const status = useWorkbenchStore((state) => state.status);
   const [canvasTheme, toggleCanvasTheme] = useCanvasTheme();
   const [canvasMode, setCanvasMode] = useCanvasMode();
@@ -2119,6 +2138,28 @@ function WorkpadPane() {
             >
               <RefreshCcw size={16} />
             </button>
+            {artifact.spec_type === "rfc" ? (
+              <button
+                type="button"
+                onClick={() => void verifyActiveCitations({ force: true })}
+                disabled={verify.phase === "verifying"}
+                title={
+                  verify.phase === "error"
+                    ? verify.error?.message ?? "Verify failed - click to retry"
+                    : "Check citations against the repo"
+                }
+                aria-label="Verify citations"
+                className="glass-button !px-3 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {verify.phase === "verifying" ? (
+                  <LoaderCircle size={16} className="animate-spin" />
+                ) : verify.phase === "error" ? (
+                  <RefreshCcw size={16} className="text-rose-300" />
+                ) : (
+                  <RefreshCcw size={16} />
+                )}
+              </button>
+            ) : null}
             <button type="button" onClick={() => void handleCopy()} className="glass-button">
               {copyState === "copied" ? <Check size={16} /> : <Copy size={16} />}
               {copyState === "copied" ? "Copied" : "Copy"}
@@ -2710,6 +2751,7 @@ function App() {
   const [canvasOnLeft, toggleCanvasOnLeft] = useCanvasOnLeft();
   const [newSpecOpen, setNewSpecOpen] = useState(false);
   useAutosave();
+  useAutoVerifyCitations();
 
   useEffect(() => {
     void bootstrap();

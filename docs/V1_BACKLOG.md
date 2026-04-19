@@ -140,9 +140,9 @@ The "living" half of the wedge. Make stale spec obvious.
 - [ ] Clicking the banner scrolls to the first stale citation.
 
 ### Frontend: verify trigger
-- [ ] Auto-verify on spec open (once per session; dedupe by artifact id).
-- [ ] Manual "Verify citations" button in the workpad toolbar (next to Copy / Download).
-- [ ] Loading state while verifying; error state with retry on failure.
+- [x] Auto-verify on spec open (once per session; dedupe by artifact id).
+- [x] Manual "Verify citations" button in the workpad toolbar (next to Copy / Download).
+- [x] Loading state while verifying; error state with retry on failure.
 
 ### Exit criterion
 - [ ] Create a spec against a test repo; edit the cited file in the repo (rename the function); reopen the spec; stale badge + drift banner appear; popover shows the new location.
