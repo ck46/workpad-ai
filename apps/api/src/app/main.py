@@ -35,7 +35,7 @@ from .schemas import (
     SpecDraftRequest,
     VerifyCitationsResult,
 )
-from .spec_service import CitationVerifyService, SpecDraftService
+from .spec_service import CitationInsightService, CitationVerifyService, SpecDraftService
 
 
 settings = get_settings()
@@ -43,6 +43,7 @@ session_factory = get_session_factory()
 workpad_service = WorkpadChatService()
 spec_draft_service = SpecDraftService()
 citation_verify_service = CitationVerifyService()
+citation_insight_service = CitationInsightService()
 
 
 @asynccontextmanager
@@ -227,3 +228,15 @@ def verify_artifact_citations(artifact_id: str, force: bool = False):
         remaining=result.remaining,
         citations=citations,
     )
+
+
+@app.get(f"{settings.api_prefix}/citations/{{citation_id}}/preview")
+def preview_citation(citation_id: str):
+    try:
+        return citation_insight_service.preview(citation_id)
+    except GitHubAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except GitHubClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
