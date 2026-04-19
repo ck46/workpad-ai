@@ -128,11 +128,11 @@ The "living" half of the wedge. Make stale spec obvious.
 
 ### Frontend: citation status
 - [x] Extend Citation pill with status badge (green/amber/red) based on `resolved_state`.
-- [ ] Click pill → popover with:
-  - [ ] Source kind + target summary (path, PR title, commit SHA, timestamp).
-  - [ ] Status label.
-  - [ ] If stale: "moved to `lib/auth/verify.ts:12-28`" (from `last_observed`).
-  - [ ] "View in GitHub" link.
+- [x] Click pill → popover with:
+  - [x] Source kind + target summary (path, PR title, commit SHA, timestamp).
+  - [x] Status label.
+  - [x] If stale: "moved to `lib/auth/verify.ts:12-28`" (from `last_observed`).
+  - [x] "View in GitHub" link.
 
 ### Frontend: drift banner
 - [ ] Banner component at the top of `WorkpadPane` when any citation is stale/missing.

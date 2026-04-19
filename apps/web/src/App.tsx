@@ -1345,11 +1345,182 @@ function citationStateModifier(state: ResolvedState | null): string {
   }
 }
 
+function githubUrlForCitation(citation: Citation): string | null {
+  const target = citation.target ?? {};
+  const observed = citation.last_observed ?? {};
+  switch (citation.kind) {
+    case "repo_range": {
+      const repo = String(target.repo ?? "");
+      const path = String(target.path ?? "");
+      const ref =
+        (observed.at_ref as string | undefined) ||
+        (target.ref_at_draft as string | undefined) ||
+        "";
+      const suggested = observed.suggested_range as
+        | { line_start?: number; line_end?: number }
+        | undefined;
+      const ls = suggested?.line_start ?? (target.line_start as number | undefined);
+      const le = suggested?.line_end ?? (target.line_end as number | undefined);
+      if (!repo || !path || !ref) return null;
+      const anchor = ls && le ? `#L${ls}-L${le}` : "";
+      return `https://github.com/${repo}/blob/${ref}/${path}${anchor}`;
+    }
+    case "repo_pr": {
+      const url = observed.html_url as string | undefined;
+      if (url) return url;
+      const repo = String(target.repo ?? "");
+      const number = target.number as number | undefined;
+      return repo && number ? `https://github.com/${repo}/pull/${number}` : null;
+    }
+    case "repo_commit": {
+      const url = observed.html_url as string | undefined;
+      if (url) return url;
+      const repo = String(target.repo ?? "");
+      const sha = String(target.sha ?? "");
+      return repo && sha ? `https://github.com/${repo}/commit/${sha}` : null;
+    }
+    default:
+      return null;
+  }
+}
+
+function stateLabel(state: ResolvedState | null): string {
+  switch (state) {
+    case "live":
+      return "Live";
+    case "stale":
+      return "Stale";
+    case "missing":
+      return "Missing";
+    default:
+      return "Unverified";
+  }
+}
+
+function CitationPopover({
+  citation,
+  anchor,
+  onClose,
+}: {
+  citation: Citation | null;
+  anchor: string;
+  onClose: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        onClose();
+      }
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
+
+  const url = citation ? githubUrlForCitation(citation) : null;
+  const state = citation?.resolved_state ?? null;
+  const target = citation?.target ?? {};
+  const observed = citation?.last_observed ?? null;
+  const suggested = observed?.suggested_range as
+    | { line_start?: number; line_end?: number }
+    | undefined;
+
+  return (
+    <div
+      ref={containerRef}
+      contentEditable={false}
+      className="absolute left-0 top-full z-30 mt-1 w-80 rounded-2xl border border-white/10 bg-chrome-900/95 p-4 text-left text-sm text-slate-100 shadow-panel backdrop-blur-xl"
+    >
+      {citation ? (
+        <>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+              {citation.kind.replace("_", " ")}
+            </span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                state === "live"
+                  ? "bg-emerald-400/15 text-emerald-200"
+                  : state === "stale"
+                    ? "bg-amber-400/15 text-amber-200"
+                    : state === "missing"
+                      ? "bg-rose-500/15 text-rose-200"
+                      : "bg-white/10 text-slate-300"
+              }`}
+            >
+              {stateLabel(state)}
+            </span>
+          </div>
+          <div className="mt-2 break-all font-mono text-xs text-slate-200">
+            {citationPillLabel(citation, anchor)}
+          </div>
+          {citation.kind === "repo_range" ? (
+            <div className="mt-1 text-[11px] text-slate-500">
+              {String(target.repo ?? "")} · {String(target.path ?? "")}
+            </div>
+          ) : citation.kind === "repo_pr" ? (
+            <div className="mt-1 text-[11px] text-slate-500">
+              {String(target.repo ?? "")} · {String(target.title_at_draft ?? "")}
+            </div>
+          ) : citation.kind === "repo_commit" ? (
+            <div className="mt-1 text-[11px] text-slate-500">
+              {String(target.repo ?? "")}
+            </div>
+          ) : null}
+          {state === "stale" && suggested?.line_start && suggested?.line_end ? (
+            <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+              Content moved to lines {suggested.line_start}–{suggested.line_end}.
+            </div>
+          ) : null}
+          {state === "missing" ? (
+            <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+              Target no longer resolves on GitHub.
+            </div>
+          ) : null}
+          <div className="mt-4 flex items-center justify-between">
+            <span className="text-[11px] text-slate-500">anchor: {anchor}</span>
+            {url ? (
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-100 hover:border-white/20 hover:bg-white/10"
+              >
+                <Github size={12} />
+                View in GitHub
+              </a>
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+            Unverified citation
+          </div>
+          <div className="mt-2 text-xs text-slate-400">
+            Anchor <code className="font-mono">{anchor}</code> couldn't be matched against this
+            artifact. Reopen the workpad or run Verify citations to refresh.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function CitationPill({ node }: NodeViewProps) {
   const anchor = String(node.attrs.anchor ?? "").toLowerCase();
   const citation = useWorkbenchStore((state) =>
     state.activeArtifact?.citations?.find((item) => item.anchor === anchor) ?? null,
   );
+  const [open, setOpen] = useState(false);
 
   const label = citationPillLabel(citation, anchor);
   const stateModifier = citationStateModifier(citation?.resolved_state ?? null);
@@ -1369,11 +1540,24 @@ function CitationPill({ node }: NodeViewProps) {
       data-state={citation?.resolved_state ?? "unknown"}
       className={`workpad-citation ${stateModifier}`.trim()}
       title={title}
+      style={{ position: "relative" }}
     >
-      <span className="workpad-citation__icon" aria-hidden>
-        {citation ? iconForCitationKind(citation.kind) : <FileText size={12} />}
-      </span>
-      <span className="workpad-citation__label">{label}</span>
+      <button
+        type="button"
+        className="workpad-citation__button"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+      >
+        <span className="workpad-citation__icon" aria-hidden>
+          {citation ? iconForCitationKind(citation.kind) : <FileText size={12} />}
+        </span>
+        <span className="workpad-citation__label">{label}</span>
+      </button>
+      {open ? (
+        <CitationPopover citation={citation} anchor={anchor} onClose={() => setOpen(false)} />
+      ) : null}
     </NodeViewWrapper>
   );
 }

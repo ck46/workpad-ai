@@ -126,6 +126,11 @@ body::before {
   line-height: 1.4;
 }
 
+.workpad-citation__button {
+  @apply inline-flex items-center gap-1 border-0 bg-transparent p-0 text-inherit focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-300/60;
+  cursor: pointer;
+}
+
 .workpad-citation:hover {
   @apply border-sky-300/50 bg-sky-400/20;
 }
