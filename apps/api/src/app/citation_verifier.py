@@ -113,7 +113,34 @@ class CitationVerifier:
             result.truncated = True
             result.remaining = len(leftover)
 
+        if session is not None:
+            self._persist_outcomes(result.outcomes, session)
+
         return result
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def _persist_outcomes(self, outcomes: list[CitationOutcome], session: Session) -> None:
+        """Write resolved_state / last_checked_at / last_observed back to Citation rows.
+
+        Outcomes that don't resolve to an existing row (e.g. a citation was
+        deleted between verify passes) are silently skipped - the result
+        object already reflects the correct state for the caller.
+        """
+
+        from .core import Citation, utcnow
+
+        now = utcnow()
+        for outcome in outcomes:
+            row = session.get(Citation, outcome.citation_id)
+            if row is None:
+                continue
+            row.resolved_state = outcome.resolved_state
+            row.last_checked_at = now
+            row.last_observed = outcome.last_observed
+        session.commit()
 
     # ------------------------------------------------------------------
     # Per-kind resolution
