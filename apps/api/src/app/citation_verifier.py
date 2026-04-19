@@ -21,6 +21,20 @@ from typing import TYPE_CHECKING, Any
 from .github_client import GitHubClientError, GitHubNotFoundError
 from .hashing import content_hash_for_range
 
+
+def _normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _slice_lines(content: bytes, line_start: int, line_end: int) -> str:
+    """Extract inclusive 1-indexed line range from *content* with normalized newlines."""
+
+    text = _normalize_newlines(content.decode("utf-8", errors="replace"))
+    lines = text.split("\n")
+    start = max(line_start - 1, 0)
+    end = min(line_end, len(lines))
+    return "\n".join(lines[start:end])
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -183,15 +197,68 @@ class CitationVerifier:
                 resolved_state="live",
                 last_observed={"at_ref": head_sha},
             )
+
+        suggested = self._suggest_new_range(
+            repo=repo,
+            path=path,
+            pinned_ref=ref_at_draft if isinstance(ref_at_draft, str) else None,
+            pinned_line_start=line_start,
+            pinned_line_end=line_end,
+            head_bytes=file_content.content,
+        )
+
+        observed: dict[str, Any] = {
+            "at_ref": head_sha,
+            "observed_hash": observed_hash,
+            "pinned_ref": ref_at_draft,
+        }
+        if suggested:
+            observed["suggested_range"] = suggested
         return CitationOutcome(
             citation_id=citation_id,
             resolved_state="stale",
-            last_observed={
-                "at_ref": head_sha,
-                "observed_hash": observed_hash,
-                "pinned_ref": ref_at_draft,
-            },
+            last_observed=observed,
         )
+
+    def _suggest_new_range(
+        self,
+        *,
+        repo: str,
+        path: str,
+        pinned_ref: str | None,
+        pinned_line_start: int,
+        pinned_line_end: int,
+        head_bytes: bytes,
+    ) -> dict[str, int] | None:
+        """Given a stale repo_range citation, locate the original snippet at HEAD.
+
+        Fetches the file at the pinned SHA so we know the exact bytes the
+        drafter saw, slices out the pinned line range, and searches the
+        HEAD content for the same normalized snippet. The first match wins;
+        this is intentionally simple for v1.
+        """
+
+        if not pinned_ref:
+            return None
+
+        try:
+            pinned_file = self._github_reader.get_file(repo, pinned_ref, path)
+        except (GitHubNotFoundError, GitHubClientError):
+            return None
+
+        needle = _slice_lines(pinned_file.content, pinned_line_start, pinned_line_end)
+        if not needle:
+            return None
+        haystack = _normalize_newlines(head_bytes.decode("utf-8", errors="replace"))
+        offset = haystack.find(needle)
+        if offset < 0:
+            return None
+
+        preceding_newlines = haystack.count("\n", 0, offset)
+        new_start = preceding_newlines + 1
+        line_count = needle.count("\n") + 1
+        new_end = new_start + line_count - 1
+        return {"line_start": new_start, "line_end": new_end}
 
     def _resolve_repo_pr(self, citation: Any, target: dict[str, Any]) -> CitationOutcome:
         citation_id = str(citation.id)
