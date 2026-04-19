@@ -110,7 +110,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 The "living" half of the wedge. Make stale spec obvious.
 
 ### Backend: verifier
-- [ ] Create new module `apps/api/src/app/citation_verifier.py`.
+- [x] Create new module `apps/api/src/app/citation_verifier.py`.
 - [ ] `verify_citations(artifact_id, session) -> VerifyResult`:
   - [ ] Resolve current HEAD sha for each repo referenced.
   - [ ] For `repo_range`: fetch file at HEAD (via cache), hash the *pinned* line range from draft-time content, compare to `content_hash_at_draft`.
