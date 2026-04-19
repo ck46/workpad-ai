@@ -253,6 +253,36 @@ const INITIAL_DRAFT_STATE: DraftState = {
   startedAt: null,
 };
 
+type VerifyPhase = "idle" | "verifying" | "success" | "error";
+
+type VerifyState = {
+  phase: VerifyPhase;
+  counts: { live: number; stale: number; missing: number; unknown: number };
+  truncated: boolean;
+  remaining: number;
+  error: { code: string; message: string } | null;
+  lastArtifactId: string | null;
+  lastRunAt: number | null;
+};
+
+const INITIAL_VERIFY_STATE: VerifyState = {
+  phase: "idle",
+  counts: { live: 0, stale: 0, missing: 0, unknown: 0 },
+  truncated: false,
+  remaining: 0,
+  error: null,
+  lastArtifactId: null,
+  lastRunAt: null,
+};
+
+type VerifyCitationsResponse = {
+  artifact_id: string;
+  counts: Partial<Record<"live" | "stale" | "missing" | "unknown", number>>;
+  truncated: boolean;
+  remaining: number;
+  citations: Citation[];
+};
+
 type ConversationSummary = {
   id: string;
   title: string;
@@ -302,6 +332,8 @@ type WorkbenchStore = {
   draft: DraftState;
   draftSpec: (payload: DraftSpecPayload) => Promise<void>;
   resetDraft: () => void;
+  verify: VerifyState;
+  verifyActiveCitations: (options?: { force?: boolean }) => Promise<void>;
 };
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
@@ -1095,6 +1127,69 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
           error: {
             code: "network",
             message: error instanceof Error ? error.message : "Draft request failed.",
+          },
+        },
+      }));
+    }
+  },
+
+  verify: INITIAL_VERIFY_STATE,
+
+  async verifyActiveCitations(options?: { force?: boolean }) {
+    const artifact = get().activeArtifact;
+    if (!artifact) {
+      return;
+    }
+    const query = options?.force ? "?force=true" : "";
+    set((state) => ({
+      verify: { ...state.verify, phase: "verifying", error: null },
+    }));
+
+    try {
+      const result = await requestJson<VerifyCitationsResponse>(
+        `/api/artifacts/${artifact.id}/verify-citations${query}`,
+        { method: "POST" },
+      );
+
+      set((state) => {
+        const counts = {
+          live: Number(result.counts.live ?? 0),
+          stale: Number(result.counts.stale ?? 0),
+          missing: Number(result.counts.missing ?? 0),
+          unknown: Number(result.counts.unknown ?? 0),
+        };
+        const verify: VerifyState = {
+          phase: "success",
+          counts,
+          truncated: Boolean(result.truncated),
+          remaining: Number(result.remaining ?? 0),
+          error: null,
+          lastArtifactId: result.artifact_id,
+          lastRunAt: Date.now(),
+        };
+
+        if (!state.activeArtifact || state.activeArtifact.id !== result.artifact_id) {
+          return { verify };
+        }
+
+        const nextArtifact: Artifact = {
+          ...state.activeArtifact,
+          citations: result.citations,
+        };
+        return {
+          verify,
+          activeArtifact: nextArtifact,
+          artifacts: updateArtifactCollection(state.artifacts, nextArtifact),
+        };
+      });
+    } catch (error) {
+      set((state) => ({
+        verify: {
+          ...state.verify,
+          phase: "error",
+          error: {
+            code: "network",
+            message: error instanceof Error ? error.message : "Verify request failed.",
           },
         },
       }));
