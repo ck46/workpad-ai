@@ -18,6 +18,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .github_client import GitHubClientError, GitHubNotFoundError
+from .hashing import content_hash_for_range
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -71,6 +74,111 @@ class CitationVerifier:
         citations: Iterable[Any],
         session: Session,
     ) -> VerifyResult:
-        """Run a verify pass for *artifact_id*. Per-kind resolution lands next."""
+        """Run a verify pass for *artifact_id*.
 
-        raise NotImplementedError("CitationVerifier.verify is wired in subsequent commits.")
+        Caches the current HEAD sha per repo for the duration of the pass
+        so a spec with many citations against the same repo pays for one
+        resolve_head call, not N. Per-citation exceptions are swallowed
+        into ``unknown`` outcomes so a single transient failure doesn't
+        sink the whole pass.
+        """
+
+        result = VerifyResult(artifact_id=artifact_id)
+        head_cache: dict[str, str] = {}
+
+        for citation in citations:
+            outcome = self._resolve_one(citation, head_cache=head_cache)
+            if outcome is not None:
+                result.outcomes.append(outcome)
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Per-kind resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_one(
+        self,
+        citation: Any,
+        *,
+        head_cache: dict[str, str],
+    ) -> CitationOutcome | None:
+        kind = getattr(citation, "kind", None)
+        target = getattr(citation, "target", None) or {}
+        if kind == "repo_range":
+            return self._resolve_repo_range(citation, target, head_cache)
+        return CitationOutcome(citation_id=str(citation.id), resolved_state="unknown")
+
+    def _head_for_repo(self, repo: str, head_cache: dict[str, str]) -> str | None:
+        cached = head_cache.get(repo)
+        if cached is not None:
+            return cached
+        try:
+            sha = self._github_reader.client.resolve_head(repo)
+        except (GitHubNotFoundError, GitHubClientError):
+            return None
+        head_cache[repo] = sha
+        return sha
+
+    def _resolve_repo_range(
+        self,
+        citation: Any,
+        target: dict[str, Any],
+        head_cache: dict[str, str],
+    ) -> CitationOutcome:
+        citation_id = str(citation.id)
+        repo = target.get("repo")
+        path = target.get("path")
+        line_start = target.get("line_start")
+        line_end = target.get("line_end")
+        pinned_hash = target.get("content_hash_at_draft")
+        ref_at_draft = target.get("ref_at_draft")
+
+        if not (
+            isinstance(repo, str)
+            and isinstance(path, str)
+            and isinstance(line_start, int)
+            and isinstance(line_end, int)
+            and isinstance(pinned_hash, str)
+        ):
+            return CitationOutcome(citation_id=citation_id, resolved_state="unknown")
+
+        head_sha = self._head_for_repo(repo, head_cache)
+        if head_sha is None:
+            return CitationOutcome(citation_id=citation_id, resolved_state="unknown")
+
+        # When HEAD hasn't moved past draft, the file cannot have drifted.
+        if ref_at_draft and head_sha == ref_at_draft:
+            return CitationOutcome(
+                citation_id=citation_id,
+                resolved_state="live",
+                last_observed={"at_ref": head_sha},
+            )
+
+        try:
+            file_content = self._github_reader.get_file(repo, head_sha, path)
+        except GitHubNotFoundError:
+            return CitationOutcome(
+                citation_id=citation_id,
+                resolved_state="missing",
+                last_observed={"at_ref": head_sha, "path": path, "reason": "path_gone"},
+            )
+        except GitHubClientError:
+            return CitationOutcome(citation_id=citation_id, resolved_state="unknown")
+
+        observed_hash = content_hash_for_range(file_content.content, line_start, line_end)
+        if observed_hash == pinned_hash:
+            return CitationOutcome(
+                citation_id=citation_id,
+                resolved_state="live",
+                last_observed={"at_ref": head_sha},
+            )
+        return CitationOutcome(
+            citation_id=citation_id,
+            resolved_state="stale",
+            last_observed={
+                "at_ref": head_sha,
+                "observed_hash": observed_hash,
+                "pinned_ref": ref_at_draft,
+            },
+        )
