@@ -138,12 +138,52 @@ body::before {
   @apply truncate;
 }
 
+.workpad-citation--stale {
+  @apply border-amber-300/40 bg-amber-400/15 text-amber-100;
+}
+
+.workpad-citation--stale:hover {
+  @apply border-amber-300/60 bg-amber-400/25;
+}
+
+.workpad-citation--stale .workpad-citation__icon {
+  @apply text-amber-200;
+}
+
+.workpad-citation--missing {
+  @apply border-rose-400/40 bg-rose-500/15 text-rose-100 line-through decoration-rose-300/40;
+}
+
+.workpad-citation--missing:hover {
+  @apply border-rose-400/60 bg-rose-500/25;
+}
+
+.workpad-citation--missing .workpad-citation__icon {
+  @apply text-rose-200;
+}
+
 .tiptap-light .workpad-citation {
   @apply border-sky-200 bg-sky-50 text-sky-700;
 }
 
 .tiptap-light .workpad-citation__icon {
   @apply text-sky-600;
+}
+
+.tiptap-light .workpad-citation--stale {
+  @apply border-amber-300 bg-amber-50 text-amber-800;
+}
+
+.tiptap-light .workpad-citation--stale .workpad-citation__icon {
+  @apply text-amber-700;
+}
+
+.tiptap-light .workpad-citation--missing {
+  @apply border-rose-300 bg-rose-50 text-rose-700 line-through decoration-rose-400/60;
+}
+
+.tiptap-light .workpad-citation--missing .workpad-citation__icon {
+  @apply text-rose-700;
 }
 
 .prose-chat h1 {

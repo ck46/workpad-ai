@@ -127,7 +127,7 @@ The "living" half of the wedge. Make stale spec obvious.
 - [x] Optional query param `force=true` to bypass same-minute dedupe.
 
 ### Frontend: citation status
-- [ ] Extend Citation pill with status badge (green/amber/red) based on `resolved_state`.
+- [x] Extend Citation pill with status badge (green/amber/red) based on `resolved_state`.
 - [ ] Click pill → popover with:
   - [ ] Source kind + target summary (path, PR title, commit SHA, timestamp).
   - [ ] Status label.

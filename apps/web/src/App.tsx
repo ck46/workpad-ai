@@ -1334,6 +1334,17 @@ function citationPillLabel(citation: Citation | null, anchor: string): string {
   }
 }
 
+function citationStateModifier(state: ResolvedState | null): string {
+  switch (state) {
+    case "stale":
+      return "workpad-citation--stale";
+    case "missing":
+      return "workpad-citation--missing";
+    default:
+      return "";
+  }
+}
+
 function CitationPill({ node }: NodeViewProps) {
   const anchor = String(node.attrs.anchor ?? "").toLowerCase();
   const citation = useWorkbenchStore((state) =>
@@ -1341,7 +1352,13 @@ function CitationPill({ node }: NodeViewProps) {
   );
 
   const label = citationPillLabel(citation, anchor);
-  const title = citation ? `${citation.kind} · ${label}` : `Unresolved citation: ${anchor}`;
+  const stateModifier = citationStateModifier(citation?.resolved_state ?? null);
+  const titleState = citation?.resolved_state
+    ? ` · ${citation.resolved_state}`
+    : "";
+  const title = citation
+    ? `${citation.kind}${titleState} · ${label}`
+    : `Unresolved citation: ${anchor}`;
 
   return (
     <NodeViewWrapper
@@ -1349,7 +1366,8 @@ function CitationPill({ node }: NodeViewProps) {
       contentEditable={false}
       draggable={false}
       data-cite={anchor}
-      className="workpad-citation"
+      data-state={citation?.resolved_state ?? "unknown"}
+      className={`workpad-citation ${stateModifier}`.trim()}
       title={title}
     >
       <span className="workpad-citation__icon" aria-hidden>
