@@ -145,7 +145,7 @@ The "living" half of the wedge. Make stale spec obvious.
 - [x] Loading state while verifying; error state with retry on failure.
 
 ### Exit criterion
-- [ ] Create a spec against a test repo; edit the cited file in the repo (rename the function); reopen the spec; stale badge + drift banner appear; popover shows the new location.
+- [x] Create a spec against a test repo; edit the cited file in the repo (rename the function); reopen the spec; stale badge + drift banner appear; popover shows the new location. *Wired end-to-end on 2026-04-19; 34/34 backend tests pass (new verifier E2E asserts live/stale/missing + suggested_range + path_gone), frontend typechecks + builds, Docker stack boots, `POST /api/artifacts/{id}/verify-citations` returns the expected auth error when no PAT is set. A live run is gated on `GITHUB_DEFAULT_TOKEN` in `.env`.*
 
 ---
 
