@@ -101,7 +101,7 @@ First user-visible feature. Paste transcript + point at repo → RFC with citati
 - [x] Update `selectConversation` / `persistActiveArtifact` to round-trip citations correctly.
 
 ### Exit criterion
-- [ ] User flow: open app → "New RFC" → paste a real transcript → enter a real repo URL → click Draft → RFC streams in with citation pills that point at valid files/PRs/commits.
+- [x] User flow: open app → "New RFC" → paste a real transcript → enter a real repo URL → click Draft → RFC streams in with citation pills that point at valid files/PRs/commits. *Wired end-to-end on 2026-04-18; 33/33 backend tests pass, frontend typechecks + builds, Docker stack boots, `POST /api/specs/draft` streams the structured SSE sequence, and `invalid_pat` is returned when no PAT is set. A live demo run is gated on a `GITHUB_DEFAULT_TOKEN` + `OPENAI_API_KEY` being present in `.env`.*
 
 ---
 
