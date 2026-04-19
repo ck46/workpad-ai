@@ -100,10 +100,18 @@ class CitationVerifier:
         result = VerifyResult(artifact_id=artifact_id)
         head_cache: dict[str, str] = {}
 
-        for citation in citations:
+        citations_list = list(citations)
+        processable = citations_list[:MAX_CITATIONS_PER_PASS]
+        leftover = citations_list[MAX_CITATIONS_PER_PASS:]
+
+        for citation in processable:
             outcome = self._resolve_one(citation, head_cache=head_cache)
             if outcome is not None:
                 result.outcomes.append(outcome)
+
+        if leftover:
+            result.truncated = True
+            result.remaining = len(leftover)
 
         return result
 
