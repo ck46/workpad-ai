@@ -542,6 +542,17 @@ def _iter_markdown_blocks(content: str) -> list[tuple[str, str]]:
             blocks.append(("spacer", ""))
             continue
 
+        if stripped in ("---", "***", "___"):
+            flush_paragraph()
+            blocks.append(("divider", ""))
+            continue
+
+        footnote_match = re.match(r"^\[\^([^\]]+)\]:\s*(.*)$", stripped)
+        if footnote_match:
+            flush_paragraph()
+            blocks.append(("footnote", f"[{footnote_match.group(1)}] {footnote_match.group(2).strip()}"))
+            continue
+
         heading_match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if heading_match:
             flush_paragraph()
@@ -592,6 +603,16 @@ def _build_docx_bytes(artifact: Artifact, body: str | None = None) -> bytes:
             run.font.name = "Courier New"
             run.font.size = Pt(10)
             continue
+        if kind == "divider":
+            paragraph = document.add_paragraph()
+            run = paragraph.add_run("—" * 20)
+            continue
+        if kind == "footnote":
+            paragraph = document.add_paragraph()
+            run = paragraph.add_run(text)
+            run.font.size = Pt(9)
+            run.italic = True
+            continue
         if kind == "paragraph":
             document.add_paragraph(text)
 
@@ -628,6 +649,13 @@ def _build_pdf_bytes(artifact: Artifact, body: str | None = None) -> bytes:
         leftIndent=12,
         backColor="#F4F4F5",
     )
+    footnote_style = ParagraphStyle(
+        "Footnote",
+        parent=normal,
+        fontSize=8,
+        leading=11,
+        textColor="#4B5563",
+    )
 
     story = [Paragraph(artifact.title, styles["Title"]), Spacer(1, 0.2 * inch)]
 
@@ -640,6 +668,11 @@ def _build_pdf_bytes(artifact: Artifact, body: str | None = None) -> bytes:
             story.append(Paragraph(text, normal))
         elif kind == "code":
             story.append(Preformatted(text or " ", code_style))
+        elif kind == "divider":
+            story.append(Spacer(1, 0.08 * inch))
+            story.append(Paragraph("—" * 40, normal))
+        elif kind == "footnote":
+            story.append(Paragraph(text, footnote_style))
         elif kind == "paragraph":
             story.append(Paragraph(text.replace("\n", "<br/>"), normal))
         story.append(Spacer(1, 0.12 * inch))
