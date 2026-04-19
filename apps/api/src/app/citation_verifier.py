@@ -107,6 +107,16 @@ class CitationVerifier:
         target = getattr(citation, "target", None) or {}
         if kind == "repo_range":
             return self._resolve_repo_range(citation, target, head_cache)
+        if kind == "repo_pr":
+            return self._resolve_repo_pr(citation, target)
+        if kind == "repo_commit":
+            return self._resolve_repo_commit(citation, target)
+        if kind == "transcript_range":
+            return CitationOutcome(
+                citation_id=str(citation.id),
+                resolved_state="live",
+                last_observed=None,
+            )
         return CitationOutcome(citation_id=str(citation.id), resolved_state="unknown")
 
     def _head_for_repo(self, repo: str, head_cache: dict[str, str]) -> str | None:
@@ -181,4 +191,63 @@ class CitationVerifier:
                 "observed_hash": observed_hash,
                 "pinned_ref": ref_at_draft,
             },
+        )
+
+    def _resolve_repo_pr(self, citation: Any, target: dict[str, Any]) -> CitationOutcome:
+        citation_id = str(citation.id)
+        repo = target.get("repo")
+        number = target.get("number")
+        if not (isinstance(repo, str) and isinstance(number, int) and number > 0):
+            return CitationOutcome(citation_id=citation_id, resolved_state="unknown")
+
+        try:
+            pr = self._github_reader.client.get_pr(repo, number)
+        except GitHubNotFoundError:
+            return CitationOutcome(
+                citation_id=citation_id,
+                resolved_state="missing",
+                last_observed={"reason": "pr_deleted"},
+            )
+        except GitHubClientError:
+            return CitationOutcome(citation_id=citation_id, resolved_state="unknown")
+
+        # PRs are always "live" unless deleted; state/title changes go into
+        # last_observed so the pill can surface them without marking stale.
+        observed: dict[str, Any] = {
+            "state": pr.state,
+            "merged": pr.merged,
+            "title": pr.title,
+            "html_url": pr.html_url,
+        }
+        title_at_draft = target.get("title_at_draft")
+        if isinstance(title_at_draft, str) and title_at_draft and title_at_draft != pr.title:
+            observed["title_changed"] = True
+        return CitationOutcome(
+            citation_id=citation_id,
+            resolved_state="live",
+            last_observed=observed,
+        )
+
+    def _resolve_repo_commit(self, citation: Any, target: dict[str, Any]) -> CitationOutcome:
+        citation_id = str(citation.id)
+        repo = target.get("repo")
+        sha = target.get("sha")
+        if not (isinstance(repo, str) and isinstance(sha, str) and len(sha) >= 7):
+            return CitationOutcome(citation_id=citation_id, resolved_state="unknown")
+
+        try:
+            commit = self._github_reader.client.get_commit(repo, sha)
+        except GitHubNotFoundError:
+            return CitationOutcome(
+                citation_id=citation_id,
+                resolved_state="missing",
+                last_observed={"reason": "commit_unreachable"},
+            )
+        except GitHubClientError:
+            return CitationOutcome(citation_id=citation_id, resolved_state="unknown")
+
+        return CitationOutcome(
+            citation_id=citation_id,
+            resolved_state="live",
+            last_observed={"sha": commit.sha, "html_url": commit.html_url},
         )
