@@ -33,6 +33,16 @@ from .schemas import SpecDraftRequest
 _SENTINEL = object()
 
 
+def _as_utc(value):
+    """Return *value* with tzinfo=UTC when SQLite strips it on persist."""
+
+    from datetime import UTC
+
+    if value is None:
+        return value
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
 def _sse_event(payload: dict[str, Any]) -> str:
     return f"event: app\ndata: {json.dumps(payload, ensure_ascii=True)}\n\n"
 
@@ -181,7 +191,12 @@ class CitationVerifyService:
         self._settings = get_settings()
         self._session_factory = get_session_factory()
 
-    def verify(self, artifact_id: str) -> VerifyResult:
+    def verify(self, artifact_id: str, *, force: bool = False) -> VerifyResult:
+        from datetime import UTC, timedelta
+
+        from .citation_verifier import CitationOutcome
+        from .core import utcnow
+
         token = self._settings.github_default_token
         if not token:
             raise GitHubAuthError(
@@ -194,13 +209,32 @@ class CitationVerifyService:
             verifier = CitationVerifier(github_reader=reader)
 
             with self._session_factory() as session:
-                # Existence check raises ValueError (-> 404) when the id is unknown.
                 get_artifact_or_404(session, artifact_id)
                 citations = session.scalars(
                     select(Citation)
                     .where(Citation.artifact_id == artifact_id)
                     .order_by(Citation.created_at.asc())
                 ).all()
+
+                # Same-minute dedupe: if every citation was checked within the
+                # last 60 seconds, surface the persisted state instead of
+                # burning another round-trip. Callers can opt out via force=True.
+                if not force and citations and all(
+                    c.last_checked_at is not None
+                    and (_as_utc(c.last_checked_at) > utcnow() - timedelta(seconds=60))
+                    for c in citations
+                ):
+                    cached = VerifyResult(artifact_id=artifact_id)
+                    cached.outcomes = [
+                        CitationOutcome(
+                            citation_id=c.id,
+                            resolved_state=c.resolved_state,
+                            last_observed=c.last_observed,
+                        )
+                        for c in citations
+                    ]
+                    return cached
+
                 return verifier.verify(
                     artifact_id=artifact_id, citations=citations, session=session
                 )

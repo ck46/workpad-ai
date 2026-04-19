@@ -124,7 +124,7 @@ The "living" half of the wedge. Make stale spec obvious.
 ### Verify endpoint
 - [x] Add `POST /api/artifacts/{id}/verify-citations` route.
 - [x] Returns updated citations (full `CitationRead` list) + summary: `{ live, stale, missing }` counts.
-- [ ] Optional query param `force=true` to bypass same-minute dedupe.
+- [x] Optional query param `force=true` to bypass same-minute dedupe.
 
 ### Frontend: citation status
 - [ ] Extend Citation pill with status badge (green/amber/red) based on `resolved_state`.

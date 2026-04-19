@@ -207,9 +207,9 @@ def draft_spec(payload: SpecDraftRequest):
     f"{settings.api_prefix}/artifacts/{{artifact_id}}/verify-citations",
     response_model=VerifyCitationsResult,
 )
-def verify_artifact_citations(artifact_id: str):
+def verify_artifact_citations(artifact_id: str, force: bool = False):
     try:
-        result = citation_verify_service.verify(artifact_id)
+        result = citation_verify_service.verify(artifact_id, force=force)
     except GitHubAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except GitHubClientError as exc:
