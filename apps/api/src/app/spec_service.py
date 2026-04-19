@@ -398,6 +398,73 @@ class CitationInsightService:
             "html_url": commit.html_url,
         }
 
+    def diff(self, citation_id: str) -> dict:
+        """Unified diff between the pinned draft-time range and current HEAD."""
+
+        import difflib
+
+        citation = self._load_citation(citation_id)
+        if citation.kind != "repo_range":
+            raise ValueError("diff is only available for repo_range citations")
+
+        target = citation.target or {}
+        observed = citation.last_observed or {}
+        repo = str(target.get("repo") or "")
+        path = str(target.get("path") or "")
+        pinned_ref = str(target.get("ref_at_draft") or "")
+        head_ref = str(observed.get("at_ref") or "")
+        pinned_start = int(target.get("line_start") or 0)
+        pinned_end = int(target.get("line_end") or 0)
+        suggested = observed.get("suggested_range") or {}
+        head_start = int(suggested.get("line_start") or pinned_start)
+        head_end = int(suggested.get("line_end") or pinned_end)
+
+        if not (repo and path and pinned_ref and head_ref and pinned_start > 0):
+            raise ValueError("repo_range citation is missing required fields for diff")
+
+        reader, client = self._reader()
+        try:
+            pinned_file = reader.get_file(repo, pinned_ref, path)
+            head_file = reader.get_file(repo, head_ref, path)
+        finally:
+            client.close()
+
+        pinned_lines_all = _decode_lines(pinned_file.content)
+        head_lines_all = _decode_lines(head_file.content)
+
+        pinned_slice = pinned_lines_all[pinned_start - 1 : pinned_end]
+        head_slice = head_lines_all[head_start - 1 : head_end]
+
+        diff_text = "\n".join(
+            difflib.unified_diff(
+                pinned_slice,
+                head_slice,
+                fromfile=f"{path}@{pinned_ref[:7]}:{pinned_start}-{pinned_end}",
+                tofile=f"{path}@{head_ref[:7]}:{head_start}-{head_end}",
+                lineterm="",
+                n=3,
+            )
+        )
+
+        return {
+            "citation_id": citation.id,
+            "kind": "repo_range",
+            "path": path,
+            "pinned_ref": pinned_ref,
+            "head_ref": head_ref,
+            "pinned_range": {"line_start": pinned_start, "line_end": pinned_end},
+            "head_range": {"line_start": head_start, "line_end": head_end},
+            "pinned_lines": [
+                {"line": pinned_start + i, "text": text}
+                for i, text in enumerate(pinned_slice)
+            ],
+            "head_lines": [
+                {"line": head_start + i, "text": text}
+                for i, text in enumerate(head_slice)
+            ],
+            "unified_diff": diff_text,
+        }
+
     def _preview_transcript_range(self, citation: Citation) -> dict:
         # Transcript previews are served from the spec source rows, not GitHub.
         # For v1 we return the target range as-is; the frontend already knows

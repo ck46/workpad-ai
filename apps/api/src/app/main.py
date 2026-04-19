@@ -240,3 +240,15 @@ def preview_citation(citation_id: str):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(f"{settings.api_prefix}/citations/{{citation_id}}/diff")
+def diff_citation(citation_id: str):
+    try:
+        return citation_insight_service.diff(citation_id)
+    except GitHubAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except GitHubClientError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
