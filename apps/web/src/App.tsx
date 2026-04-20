@@ -2753,6 +2753,7 @@ function WorkpadPane() {
   const [downloadingFormat, setDownloadingFormat] = useState<"markdown" | "docx" | "pdf" | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
+  const canvasSticky = useStickyScroll();
   const monacoEditorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
   const editorChrome = canvasEditorClasses(canvasTheme);
   const isLightCanvas = canvasTheme === "light";
@@ -3037,7 +3038,12 @@ function WorkpadPane() {
         </div>
       </div>
       <DriftBanner />
-      <div className="flex-1 overflow-auto p-5">
+      <div className="relative flex-1 overflow-hidden">
+        <div
+          ref={canvasSticky.scrollRef}
+          onScroll={canvasSticky.onScroll}
+          className="h-full overflow-auto p-5"
+        >
         {artifact.content_type === "markdown" ? (
           isPreviewing ? (
             <MarkdownWithDiagrams content={artifact.content} className={markdownPreviewClassName(canvasTheme)} />
@@ -3076,6 +3082,16 @@ function WorkpadPane() {
             />
           </div>
         )}
+        </div>
+        {canvasSticky.showJump && artifact.content_type === "markdown" ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+            <JumpToLatestButton
+              onClick={canvasSticky.scrollToBottom}
+              label="Jump to end"
+              className="pointer-events-auto"
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );
