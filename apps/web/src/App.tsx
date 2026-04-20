@@ -2449,7 +2449,9 @@ function toBase64Utf8(str: string): string {
   return btoa(binary);
 }
 
-async function svgStringToPngDataUrl(svgString: string): Promise<string> {
+async function svgStringToPngDataUrl(
+  svgString: string,
+): Promise<{ dataUrl: string; width: number; height: number }> {
   const { svg, width, height } = normalizeSvgForRaster(svgString);
   const dataUrl = `data:image/svg+xml;base64,${toBase64Utf8(svg)}`;
   const image: HTMLImageElement = await new Promise((resolve, reject) => {
@@ -2471,7 +2473,28 @@ async function svgStringToPngDataUrl(svgString: string): Promise<string> {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/png");
+  return { dataUrl: canvas.toDataURL("image/png"), width, height };
+}
+
+// Constrain rasterized diagrams to a single Letter page for both DOCX
+// (Pandoc uses these attrs for sizing) and PDF (WeasyPrint respects them
+// too, in addition to the max-height CSS on .doc-diagram img).
+const EXPORT_DIAGRAM_MAX_WIDTH_PX = 576;  // ~6in at 96 DPI
+const EXPORT_DIAGRAM_MAX_HEIGHT_PX = 720; // ~7.5in at 96 DPI
+
+function fitDiagramDimensions(
+  width: number,
+  height: number,
+): { width: number; height: number } {
+  const ratio = Math.min(
+    1,
+    EXPORT_DIAGRAM_MAX_WIDTH_PX / Math.max(1, width),
+    EXPORT_DIAGRAM_MAX_HEIGHT_PX / Math.max(1, height),
+  );
+  return {
+    width: Math.max(1, Math.round(width * ratio)),
+    height: Math.max(1, Math.round(height * ratio)),
+  };
 }
 
 const MERMAID_PREVIEW_CONFIG = {
@@ -2491,51 +2514,57 @@ const MERMAID_EXPORT_CONFIG = {
   gantt: { useMaxWidth: false },
 };
 
-// Mermaid flowcharts default to rendering labels via <foreignObject> (HTML
-// inside SVG) which WeasyPrint can't paint and <img>-sandboxed rasterization
-// can't parse (e.g. unclosed <br> tags). Reconfigure mermaid with
-// htmlLabels:false + securityLevel:loose so it emits SVG-native <text>
-// elements, then restore the preview config once the render is done.
-async function renderMermaidForExport(id: string, source: string): Promise<string> {
-  mermaid.initialize(MERMAID_EXPORT_CONFIG);
-  try {
-    const result = await mermaid.render(id, source);
-    return result.svg;
-  } finally {
-    mermaid.initialize(MERMAID_PREVIEW_CONFIG);
-  }
-}
-
 async function buildRenderedArtifactHtml(content: string): Promise<string> {
   const segments = splitContentSegments(content);
-  const parts: string[] = [];
-  for (let i = 0; i < segments.length; i += 1) {
-    const segment = segments[i];
-    if (segment.kind === "mermaid") {
-      if (!segment.source.trim()) {
-        continue;
+  const hasMermaid = segments.some((segment) => segment.kind === "mermaid");
+
+  // Flip mermaid into export config once for the whole batch so we don't pay
+  // two initialize() round-trips per diagram (they're synchronous and block
+  // the main thread, which is the UI jitter source).
+  if (hasMermaid) {
+    mermaid.initialize(MERMAID_EXPORT_CONFIG);
+  }
+
+  try {
+    const parts: string[] = [];
+    for (let i = 0; i < segments.length; i += 1) {
+      // Yield to the browser between segments so paint/input aren't starved.
+      if (i > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
-      const safeId = `mermaid-export-${Math.random().toString(36).slice(2, 10)}`;
-      try {
-        const svg = await renderMermaidForExport(safeId, segment.source);
-        const pngDataUrl = await svgStringToPngDataUrl(svg);
-        parts.push(
-          `<div class="doc-diagram"><img src="${pngDataUrl}" alt="diagram" /></div>`,
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const escape = (text: string) =>
-          text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        parts.push(
-          `<pre><code>${escape(segment.source)}</code></pre>` +
-            `<p><em>Mermaid diagram failed to render: ${escape(message)}</em></p>`,
-        );
+      const segment = segments[i];
+      if (segment.kind === "mermaid") {
+        if (!segment.source.trim()) {
+          continue;
+        }
+        const safeId = `mermaid-export-${Math.random().toString(36).slice(2, 10)}`;
+        try {
+          const { svg } = await mermaid.render(safeId, segment.source);
+          const { dataUrl, width, height } = await svgStringToPngDataUrl(svg);
+          const fit = fitDiagramDimensions(width, height);
+          parts.push(
+            `<div class="doc-diagram"><img src="${dataUrl}" alt="diagram" ` +
+              `width="${fit.width}" height="${fit.height}" /></div>`,
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          const escape = (text: string) =>
+            text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          parts.push(
+            `<pre><code>${escape(segment.source)}</code></pre>` +
+              `<p><em>Mermaid diagram failed to render: ${escape(message)}</em></p>`,
+          );
+        }
+      } else {
+        parts.push(markdownToHtml(segment.value));
       }
-    } else {
-      parts.push(markdownToHtml(segment.value));
+    }
+    return parts.join("\n");
+  } finally {
+    if (hasMermaid) {
+      mermaid.initialize(MERMAID_PREVIEW_CONFIG);
     }
   }
-  return parts.join("\n");
 }
 
 function MarkdownWithDiagrams({ content, className }: { content: string; className?: string }) {
@@ -3319,25 +3348,51 @@ function WorkpadPane() {
               {copyState === "copied" ? "Copied" : "Copy"}
             </button>
             <div className="relative" ref={downloadMenuRef}>
-              <button type="button" onClick={() => setDownloadMenuOpen((open) => !open)} className="glass-button">
-                <FileDown size={16} />
-                {downloadingFormat ? `Downloading ${downloadingFormat.toUpperCase()}` : "Download"}
-                <ChevronDown size={16} />
+              <button
+                type="button"
+                onClick={() => setDownloadMenuOpen((open) => !open)}
+                disabled={downloadingFormat !== null}
+                aria-busy={downloadingFormat !== null}
+                className="glass-button min-w-[9.5rem] justify-center disabled:cursor-wait disabled:opacity-80"
+              >
+                {downloadingFormat ? (
+                  <LoaderCircle size={16} className="animate-spin" />
+                ) : (
+                  <FileDown size={16} />
+                )}
+                Download
+                <ChevronDown size={16} className={downloadingFormat ? "opacity-40" : ""} />
               </button>
               {downloadMenuOpen ? (
                 <div className="absolute right-0 top-full z-20 mt-2 min-w-[180px] rounded-2xl border border-white/10 bg-chrome-900/95 p-2 shadow-panel backdrop-blur-xl">
-                  <button type="button" onClick={() => void handleDownload("markdown")} className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-100 transition hover:bg-white/10">
-                    <span>Markdown</span>
-                    <span className="text-xs uppercase tracking-[0.18em] text-slate-500">.md</span>
-                  </button>
-                  <button type="button" onClick={() => void handleDownload("docx")} className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-100 transition hover:bg-white/10">
-                    <span>Word</span>
-                    <span className="text-xs uppercase tracking-[0.18em] text-slate-500">.docx</span>
-                  </button>
-                  <button type="button" onClick={() => void handleDownload("pdf")} className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-100 transition hover:bg-white/10">
-                    <span>PDF</span>
-                    <span className="text-xs uppercase tracking-[0.18em] text-slate-500">.pdf</span>
-                  </button>
+                  {(
+                    [
+                      { format: "markdown", label: "Markdown", ext: ".md" },
+                      { format: "docx", label: "Word", ext: ".docx" },
+                      { format: "pdf", label: "PDF", ext: ".pdf" },
+                    ] as const
+                  ).map((item) => {
+                    const isActive = downloadingFormat === item.format;
+                    return (
+                      <button
+                        key={item.format}
+                        type="button"
+                        onClick={() => void handleDownload(item.format)}
+                        disabled={downloadingFormat !== null}
+                        className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-100 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-60 disabled:hover:bg-transparent"
+                      >
+                        <span className="flex items-center gap-2">
+                          {isActive ? (
+                            <LoaderCircle size={14} className="animate-spin text-slate-300" />
+                          ) : null}
+                          {item.label}
+                        </span>
+                        <span className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                          {item.ext}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               ) : null}
             </div>
