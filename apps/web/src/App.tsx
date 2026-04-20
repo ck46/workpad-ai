@@ -2115,9 +2115,23 @@ function MermaidBlock({ source }: { source: string }) {
   return (
     <div
       className="my-3 overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.03] p-4 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
-      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } }) }}
+      dangerouslySetInnerHTML={{ __html: sanitizeMermaidSvg(svg) }}
     />
   );
+}
+
+// Mermaid flowcharts render node labels via <foreignObject> containing HTML
+// <div>/<span> so text can wrap and inherit CSS. DOMPurify's svg-only profile
+// strips <foreignObject> (and anything HTML inside it), leaving coloured
+// boxes with no visible text. We keep DOMPurify as defence-in-depth but let
+// it handle HTML + SVG together and explicitly allow foreignObject.
+// Mermaid itself runs with securityLevel: "strict" so user-supplied diagram
+// source can't inject scripts before we get here.
+function sanitizeMermaidSvg(svg: string): string {
+  return DOMPurify.sanitize(svg, {
+    ADD_TAGS: ["foreignObject"],
+    ADD_ATTR: ["requiredExtensions", "xmlns:xlink"],
+  });
 }
 
 function MarkdownWithDiagrams({ content, className }: { content: string; className?: string }) {
