@@ -13,6 +13,8 @@ import {
 import { Node as TiptapNode, mergeAttributes, nodePasteRule } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
 import { marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import markedKatex from "marked-katex-extension";
@@ -1581,6 +1583,66 @@ function markdownToHtml(value: string): string {
   return DOMPurify.sanitize(raw, { ADD_ATTR: ["data-cite"] });
 }
 
+// TipTap's TaskList / TaskItem extensions parse a very specific HTML shape
+// (<ul data-type="taskList"><li data-type="taskItem" data-checked="…">). The
+// GFM task list HTML that `marked` produces is a plain <ul><li> with an
+// <input type="checkbox"> child. This helper walks the sanitized preview
+// HTML and rewrites any list containing checkbox inputs into TipTap's shape
+// so the editor can render real task items instead of silently dropping the
+// inputs through its strict schema.
+function rewriteTaskListsForTiptap(html: string): string {
+  if (typeof window === "undefined" || !html.includes('type="checkbox"')) {
+    return html;
+  }
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div id="__root">${html}</div>`, "text/html");
+  const root = doc.getElementById("__root");
+  if (!root) return html;
+
+  root.querySelectorAll("ul").forEach((ul) => {
+    const items = Array.from(ul.children).filter(
+      (child): child is HTMLLIElement => child.tagName === "LI",
+    );
+    const hasCheckbox = items.some((li) => li.querySelector('input[type="checkbox"]'));
+    if (!hasCheckbox) return;
+
+    ul.setAttribute("data-type", "taskList");
+    items.forEach((li) => {
+      const checkbox = li.querySelector('input[type="checkbox"]');
+      if (!checkbox) {
+        // Mixed list — leave non-task bullets as regular list items.
+        return;
+      }
+      const checked = checkbox.hasAttribute("checked");
+      checkbox.remove();
+      li.setAttribute("data-type", "taskItem");
+      li.setAttribute("data-checked", checked ? "true" : "false");
+
+      // TipTap's task item expects block content inside. Wrap trailing
+      // inline content in a <p> if it isn't already a block.
+      const hasBlockChild = Array.from(li.children).some((child) =>
+        ["P", "UL", "OL", "PRE", "BLOCKQUOTE", "H1", "H2", "H3", "H4", "H5", "H6"].includes(
+          child.tagName,
+        ),
+      );
+      if (!hasBlockChild) {
+        const paragraph = doc.createElement("p");
+        // Move trailing whitespace/text/inline nodes into <p>.
+        while (li.firstChild) {
+          paragraph.appendChild(li.firstChild);
+        }
+        li.appendChild(paragraph);
+      }
+    });
+  });
+
+  return root.innerHTML;
+}
+
+function markdownToTiptapHtml(value: string): string {
+  return rewriteTaskListsForTiptap(markdownToHtml(value));
+}
+
 turndown.addRule("workpad-citation", {
   filter: (node) =>
     node.nodeName === "SPAN" &&
@@ -1588,6 +1650,20 @@ turndown.addRule("workpad-citation", {
   replacement: (_content, node) => {
     const anchor = (node as HTMLElement).getAttribute("data-cite") ?? "";
     return anchor ? `[[cite:${anchor}]]` : "";
+  },
+});
+
+// TipTap emits task items as <li data-type="taskItem" data-checked="…"> with
+// a <p> inside. Turndown's default list rule renders them as plain bullets;
+// override so round-tripped markdown keeps the checkbox syntax.
+turndown.addRule("workpad-task-item", {
+  filter: (node) =>
+    node.nodeName === "LI" &&
+    (node as HTMLElement).getAttribute?.("data-type") === "taskItem",
+  replacement: (content, node) => {
+    const checked = (node as HTMLElement).getAttribute("data-checked") === "true";
+    const body = content.replace(/^\n+|\n+$/g, "").replace(/\n+/g, " ");
+    return `- [${checked ? "x" : " "}] ${body}\n`;
   },
 });
 
@@ -2670,9 +2746,14 @@ function MarkdownEditor({
       extensions: [
         StarterKit,
         Image.configure({ inline: false, allowBase64: true }),
+        TaskList.configure({ HTMLAttributes: { class: "workpad-task-list" } }),
+        TaskItem.configure({
+          nested: true,
+          HTMLAttributes: { class: "workpad-task-item" },
+        }),
         CitationExtension,
       ],
-      content: markdownToHtml(value),
+      content: markdownToTiptapHtml(value),
       immediatelyRender: false,
       editable: !readOnly,
       editorProps: {
@@ -2703,7 +2784,7 @@ function MarkdownEditor({
     if (value !== lastSyncedValue.current) {
       lastSyncedValue.current = value;
       syncingExternalValueRef.current = value;
-      editor.commands.setContent(markdownToHtml(value), false);
+      editor.commands.setContent(markdownToTiptapHtml(value), false);
     }
   }, [editor, value, readOnly, artifactId]);
 

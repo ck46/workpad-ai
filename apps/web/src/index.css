@@ -293,3 +293,85 @@ body::before {
 .tiptap-light .katex-display {
   color: theme("colors.slate.900");
 }
+
+/* --- Task lists -------------------------------------------------------- */
+
+/* TipTap editor: task list items are rendered as plain <li> with
+   data-type="taskItem". Replace the default list-style bullet with a real
+   checkbox-ish pill that reflects data-checked. */
+.tiptap ul[data-type="taskList"],
+.tiptap-light ul[data-type="taskList"] {
+  @apply my-2 list-none space-y-1 pl-0;
+}
+
+.tiptap li[data-type="taskItem"],
+.tiptap-light li[data-type="taskItem"] {
+  @apply flex items-start gap-2;
+}
+
+.tiptap li[data-type="taskItem"] > label,
+.tiptap-light li[data-type="taskItem"] > label {
+  @apply mt-1 inline-flex flex-none select-none;
+}
+
+.tiptap li[data-type="taskItem"] > label input[type="checkbox"],
+.tiptap-light li[data-type="taskItem"] > label input[type="checkbox"] {
+  @apply h-4 w-4 cursor-pointer appearance-none rounded border border-white/20 bg-white/5 align-middle transition;
+  background-image: none;
+}
+
+.tiptap li[data-type="taskItem"] > label input[type="checkbox"]:checked,
+.tiptap-light li[data-type="taskItem"] > label input[type="checkbox"]:checked {
+  @apply border-sky-300/60 bg-sky-400/60;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3.5 8.5 6.5 11.5 12.5 5.5'/></svg>");
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+.tiptap li[data-type="taskItem"][data-checked="true"] > div,
+.tiptap-light li[data-type="taskItem"][data-checked="true"] > div {
+  @apply opacity-60 line-through;
+}
+
+.tiptap-light li[data-type="taskItem"] > label input[type="checkbox"] {
+  @apply border-stone-400 bg-white;
+}
+
+.tiptap-light li[data-type="taskItem"] > label input[type="checkbox"]:checked {
+  @apply border-sky-500 bg-sky-500;
+}
+
+/* Preview mode (MarkdownWithDiagrams dangerouslySetInnerHTML path) keeps
+   marked's raw <input type="checkbox"> shape. Style it consistently so the
+   dark canvas doesn't swallow the control, and show a checkmark on checked
+   even though marked emits `disabled`. */
+.prose-chat ul:has(input[type="checkbox"]),
+.tiptap ul:has(input[type="checkbox"]),
+.tiptap-light ul:has(input[type="checkbox"]) {
+  @apply list-none pl-0;
+}
+
+.prose-chat li input[type="checkbox"],
+.tiptap li input[type="checkbox"],
+.tiptap-light li input[type="checkbox"] {
+  @apply mr-2 inline-block h-4 w-4 flex-none appearance-none rounded border border-white/25 bg-white/5 align-middle;
+}
+
+.prose-chat li input[type="checkbox"]:checked,
+.tiptap li input[type="checkbox"]:checked,
+.tiptap-light li input[type="checkbox"]:checked {
+  border-color: theme("colors.sky.400");
+  background-color: theme("colors.sky.400 / 0.5");
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3.5 8.5 6.5 11.5 12.5 5.5'/></svg>");
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+
+.tiptap-light li input[type="checkbox"] {
+  @apply border-stone-400 bg-white;
+}
+
+.tiptap-light li input[type="checkbox"]:checked {
+  border-color: theme("colors.sky.500");
+  background-color: theme("colors.sky.500");
+}
