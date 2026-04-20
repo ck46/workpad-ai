@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { Editor as MonacoEditor } from "@monaco-editor/react";
 import type { editor as MonacoEditorNS } from "monaco-editor";
@@ -50,6 +50,7 @@ marked.use(
 );
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
+  ArrowDown,
   ArrowLeftRight,
   ArrowUp,
   Check,
@@ -1241,6 +1242,120 @@ function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
     }
   }
   return -1;
+}
+
+type StickyScrollController = {
+  scrollRef: (node: HTMLDivElement | null) => void;
+  onScroll: (event: React.UIEvent<HTMLDivElement>) => void;
+  scrollToBottom: () => void;
+  showJump: boolean;
+};
+
+/**
+ * Keep a scrollable <div> pinned to its own bottom while new content arrives —
+ * the classic "stick to bottom unless the user scrolled up" chat pattern.
+ * Runs on every render via useLayoutEffect so streaming deltas follow without
+ * a visible jump. `showJump` flips true when the user scrolls more than
+ * `threshold` pixels away from the bottom, intended for a "Jump to latest"
+ * affordance.
+ */
+function useStickyScroll(threshold: number = 96): StickyScrollController {
+  const elementRef = useRef<HTMLDivElement | null>(null);
+  const stickyRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+
+  useLayoutEffect(() => {
+    const element = elementRef.current;
+    if (!element) return;
+    if (stickyRef.current) {
+      element.scrollTop = element.scrollHeight;
+    }
+  });
+
+  function scrollRef(node: HTMLDivElement | null) {
+    elementRef.current = node;
+    if (node && stickyRef.current) {
+      node.scrollTop = node.scrollHeight;
+    }
+  }
+
+  function onScroll(event: React.UIEvent<HTMLDivElement>) {
+    const element = event.currentTarget;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    const near = distanceFromBottom < threshold;
+    stickyRef.current = near;
+    setShowJump((previous) => (previous === !near ? previous : !near));
+  }
+
+  function scrollToBottom() {
+    const element = elementRef.current;
+    if (!element) return;
+    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+    stickyRef.current = true;
+    setShowJump(false);
+  }
+
+  return { scrollRef, onScroll, scrollToBottom, showJump };
+}
+
+function JumpToLatestButton({
+  onClick,
+  label = "Jump to latest",
+  className = "",
+}: {
+  onClick: () => void;
+  label?: string;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className={`inline-flex items-center gap-1 rounded-full border border-white/10 bg-chrome-900/90 px-3 py-1.5 text-xs text-slate-100 shadow-panel backdrop-blur transition hover:border-white/20 hover:bg-chrome-800 ${className}`}
+    >
+      <ArrowDown size={12} />
+      {label}
+    </button>
+  );
+}
+
+function ChatScrollRegion({ emptyState }: { emptyState?: React.ReactNode }) {
+  const messages = useWorkbenchStore((state) => state.messages);
+  const status = useWorkbenchStore((state) => state.status);
+  const lastMessage = messages[messages.length - 1];
+  // Subscribe to the streaming content of the last assistant turn so the
+  // useLayoutEffect in useStickyScroll re-runs on every delta, not just on
+  // new-message events.
+  const lastContentLength = lastMessage?.content.length ?? 0;
+  void lastContentLength;
+  void status;
+
+  const sticky = useStickyScroll();
+
+  if (messages.length === 0 && emptyState) {
+    return <>{emptyState}</>;
+  }
+
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={sticky.scrollRef}
+        onScroll={sticky.onScroll}
+        className="h-full overflow-auto pr-2"
+      >
+        <div className="mx-auto max-w-4xl space-y-6">{renderMessageList(messages)}</div>
+      </div>
+      {sticky.showJump ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+          <JumpToLatestButton
+            onClick={sticky.scrollToBottom}
+            className="pointer-events-auto"
+          />
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function renderMessageList(messages: Message[]) {
@@ -3586,12 +3701,8 @@ function App() {
                   </div>
                 ) : (
                   <>
-                    <div className="panel-shell flex-1 overflow-hidden p-5">
-                      <div className="h-full overflow-auto pr-2">
-                        <div className="mx-auto max-w-4xl space-y-6">
-                          {renderMessageList(messages)}
-                        </div>
-                      </div>
+                    <div className="panel-shell flex flex-1 overflow-hidden p-5">
+                      <ChatScrollRegion />
                     </div>
                     <ChatComposer />
                   </>
@@ -3641,11 +3752,7 @@ function App() {
                               </button>
                             </div>
                           </div>
-                          <div className="flex-1 overflow-auto pr-2">
-                            <div className="space-y-6">
-                              {renderMessageList(messages)}
-                            </div>
-                          </div>
+                          <ChatScrollRegion />
                         </div>
                       </div>
                       <ChatComposer />
