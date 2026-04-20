@@ -32,6 +32,8 @@ mermaid.initialize({
   securityLevel: "strict",
   fontFamily: "inherit",
 });
+// Kept in sync with MERMAID_PREVIEW_CONFIG below (the export path flips
+// config temporarily; we restore back to these values).
 
 marked.use(
   markedHighlight({
@@ -2396,6 +2398,146 @@ function sanitizeMermaidSvg(svg: string): string {
   });
 }
 
+// Parse the SVG with the browser's XML parser (which is authoritative),
+// normalize width/height from the viewBox, and re-serialize through
+// XMLSerializer. That guarantees the output is well-formed XML — no
+// duplicate attributes, no missing namespaces — regardless of what mermaid
+// emitted.
+function normalizeSvgForRaster(svgString: string): { svg: string; width: number; height: number } {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgString, "image/svg+xml");
+  const parseError = doc.querySelector("parsererror");
+  if (parseError) {
+    const detail = (parseError.textContent || "").trim().replace(/\s+/g, " ").slice(0, 160);
+    throw new Error(`svg parse error: ${detail}`);
+  }
+  const root = doc.documentElement as unknown as SVGSVGElement;
+  let width = 0;
+  let height = 0;
+  const viewBox = root.getAttribute("viewBox");
+  if (viewBox) {
+    const parts = viewBox.trim().split(/[\s,]+/).map(Number);
+    if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
+      width = parts[2];
+      height = parts[3];
+    }
+  }
+  const explicitW = Number(root.getAttribute("width"));
+  const explicitH = Number(root.getAttribute("height"));
+  if (Number.isFinite(explicitW) && explicitW > 0) width = explicitW;
+  if (Number.isFinite(explicitH) && explicitH > 0) height = explicitH;
+  if (!width) width = 800;
+  if (!height) height = 600;
+  root.setAttribute("width", String(width));
+  root.setAttribute("height", String(height));
+  if (!root.getAttribute("xmlns")) {
+    root.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  }
+  if (!root.getAttribute("xmlns:xlink")) {
+    root.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  }
+  return { svg: new XMLSerializer().serializeToString(root), width, height };
+}
+
+// UTF-8-safe btoa. Plain btoa can't handle multi-byte characters.
+function toBase64Utf8(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+async function svgStringToPngDataUrl(svgString: string): Promise<string> {
+  const { svg, width, height } = normalizeSvgForRaster(svgString);
+  const dataUrl = `data:image/svg+xml;base64,${toBase64Utf8(svg)}`;
+  const image: HTMLImageElement = await new Promise((resolve, reject) => {
+    const el = document.createElement("img");
+    el.decoding = "sync";
+    el.onload = () => resolve(el);
+    el.onerror = () => {
+      const head = svg.slice(0, 160).replace(/\s+/g, " ");
+      reject(new Error(`svg rasterize: image load failed — head: ${head}`));
+    };
+    el.src = dataUrl;
+  });
+  const scale = 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(width * scale));
+  canvas.height = Math.max(1, Math.ceil(height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("svg rasterize: canvas context unavailable");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/png");
+}
+
+const MERMAID_PREVIEW_CONFIG = {
+  startOnLoad: false,
+  theme: "dark" as const,
+  securityLevel: "strict" as const,
+  fontFamily: "inherit",
+};
+
+const MERMAID_EXPORT_CONFIG = {
+  startOnLoad: false,
+  theme: "default" as const,
+  securityLevel: "loose" as const,
+  fontFamily: "inherit",
+  flowchart: { htmlLabels: false, useMaxWidth: false },
+  sequence: { useMaxWidth: false },
+  gantt: { useMaxWidth: false },
+};
+
+// Mermaid flowcharts default to rendering labels via <foreignObject> (HTML
+// inside SVG) which WeasyPrint can't paint and <img>-sandboxed rasterization
+// can't parse (e.g. unclosed <br> tags). Reconfigure mermaid with
+// htmlLabels:false + securityLevel:loose so it emits SVG-native <text>
+// elements, then restore the preview config once the render is done.
+async function renderMermaidForExport(id: string, source: string): Promise<string> {
+  mermaid.initialize(MERMAID_EXPORT_CONFIG);
+  try {
+    const result = await mermaid.render(id, source);
+    return result.svg;
+  } finally {
+    mermaid.initialize(MERMAID_PREVIEW_CONFIG);
+  }
+}
+
+async function buildRenderedArtifactHtml(content: string): Promise<string> {
+  const segments = splitContentSegments(content);
+  const parts: string[] = [];
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i];
+    if (segment.kind === "mermaid") {
+      if (!segment.source.trim()) {
+        continue;
+      }
+      const safeId = `mermaid-export-${Math.random().toString(36).slice(2, 10)}`;
+      try {
+        const svg = await renderMermaidForExport(safeId, segment.source);
+        const pngDataUrl = await svgStringToPngDataUrl(svg);
+        parts.push(
+          `<div class="doc-diagram"><img src="${pngDataUrl}" alt="diagram" /></div>`,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const escape = (text: string) =>
+          text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        parts.push(
+          `<pre><code>${escape(segment.source)}</code></pre>` +
+            `<p><em>Mermaid diagram failed to render: ${escape(message)}</em></p>`,
+        );
+      }
+    } else {
+      parts.push(markdownToHtml(segment.value));
+    }
+  }
+  return parts.join("\n");
+}
+
 function MarkdownWithDiagrams({ content, className }: { content: string; className?: string }) {
   const segments = useMemo(() => splitContentSegments(content), [content]);
   return (
@@ -2673,7 +2815,7 @@ function ChatComposer({
   }
 
   return (
-    <div className={`panel-shell ${centered ? "mx-auto w-full max-w-4xl" : "w-full"} p-3 sm:p-4`}>
+    <div className={centered ? "mx-auto w-full max-w-4xl" : "w-full"}>
       <div className="rounded-[24px] border border-white/10 bg-white/[0.03] px-4 py-4 sm:px-5">
         <textarea
           ref={textareaRef}
@@ -2995,7 +3137,20 @@ function WorkpadPane() {
     setDownloadingFormat(format);
 
     try {
-      const response = await fetch(`${API_BASE}/api/artifacts/${currentArtifact.id}/export?format=${format}`);
+      let response: Response;
+      if ((format === "docx" || format === "pdf") && currentArtifact.content_type === "markdown") {
+        const renderedHtml = await buildRenderedArtifactHtml(currentArtifact.content);
+        response = await fetch(
+          `${API_BASE}/api/artifacts/${currentArtifact.id}/export-rendered`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ format, html: renderedHtml }),
+          },
+        );
+      } else {
+        response = await fetch(`${API_BASE}/api/artifacts/${currentArtifact.id}/export?format=${format}`);
+      }
       if (!response.ok) {
         throw new Error(await response.text());
       }

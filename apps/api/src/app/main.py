@@ -10,6 +10,7 @@ from .core import (
     archive_conversation,
     delete_conversation,
     export_artifact,
+    export_artifact_from_rendered_html,
     get_artifact_or_404,
     get_conversation_detail,
     get_session_factory,
@@ -32,6 +33,7 @@ from .schemas import (
     ExportFormat,
     ModelInfo,
     RegenerateRequest,
+    RenderedExportRequest,
     SpecDraftRequest,
     VerifyCitationsResult,
 )
@@ -161,6 +163,22 @@ def download_artifact(artifact_id: str, format: ExportFormat = ExportFormat.MARK
     with session_factory() as session:
         try:
             body, media_type, filename = export_artifact(session, artifact_id, format.value)
+            return Response(
+                content=body,
+                media_type=media_type,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(f"{settings.api_prefix}/artifacts/{{artifact_id}}/export-rendered")
+def download_artifact_from_rendered_html(artifact_id: str, payload: RenderedExportRequest):
+    with session_factory() as session:
+        try:
+            body, media_type, filename = export_artifact_from_rendered_html(
+                session, artifact_id, payload.format, payload.html
+            )
             return Response(
                 content=body,
                 media_type=media_type,

@@ -143,6 +143,11 @@ class ExportFormat(StrEnum):
     PDF = "pdf"
 
 
+class RenderedExportRequest(BaseModel):
+    format: Literal["docx", "pdf", "html"]
+    html: str
+
+
 class SpecSourceRead(BaseModel):
     id: str
     artifact_id: str

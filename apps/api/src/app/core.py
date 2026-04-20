@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from html import escape as html_escape
-from io import BytesIO
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -11,14 +11,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from docx import Document
-from docx.shared import Pt
 from markdown import markdown
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from reportlab.lib.pagesizes import LETTER
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, Preformatted, SimpleDocTemplate, Spacer
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
@@ -507,178 +501,216 @@ def _safe_filename(name: str) -> str:
     return base or "workpad_export"
 
 
-def _iter_markdown_blocks(content: str) -> list[tuple[str, str]]:
-    blocks: list[tuple[str, str]] = []
-    buffer: list[str] = []
-    in_code_block = False
+_PREVIEW_MD_EXTENSIONS = [
+    "extra",
+    "sane_lists",
+    "smarty",
+    "admonition",
+    "pymdownx.tasklist",
+    "pymdownx.tilde",
+    "pymdownx.superfences",
+    "pymdownx.betterem",
+]
 
-    def flush_paragraph() -> None:
-        nonlocal buffer
-        if buffer:
-            blocks.append(("paragraph", "\n".join(buffer).strip()))
-            buffer = []
-
-    for raw_line in content.splitlines():
-        line = raw_line.rstrip()
-        stripped = line.strip()
-
-        if stripped.startswith("```"):
-            if in_code_block:
-                blocks.append(("code", "\n".join(buffer)))
-                buffer = []
-                in_code_block = False
-            else:
-                flush_paragraph()
-                in_code_block = True
-                buffer = []
-            continue
-
-        if in_code_block:
-            buffer.append(line)
-            continue
-
-        if not stripped:
-            flush_paragraph()
-            blocks.append(("spacer", ""))
-            continue
-
-        if stripped in ("---", "***", "___"):
-            flush_paragraph()
-            blocks.append(("divider", ""))
-            continue
-
-        footnote_match = re.match(r"^\[\^([^\]]+)\]:\s*(.*)$", stripped)
-        if footnote_match:
-            flush_paragraph()
-            blocks.append(("footnote", f"[{footnote_match.group(1)}] {footnote_match.group(2).strip()}"))
-            continue
-
-        heading_match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
-        if heading_match:
-            flush_paragraph()
-            level = len(heading_match.group(1))
-            blocks.append((f"heading_{min(level, 4)}", heading_match.group(2).strip()))
-            continue
-
-        bullet_match = re.match(r"^[-*]\s+(.*)$", stripped)
-        if bullet_match:
-            flush_paragraph()
-            blocks.append(("bullet", bullet_match.group(1).strip()))
-            continue
-
-        numbered_match = re.match(r"^\d+\.\s+(.*)$", stripped)
-        if numbered_match:
-            flush_paragraph()
-            blocks.append(("numbered", numbered_match.group(1).strip()))
-            continue
-
-        buffer.append(stripped)
-
-    if in_code_block and buffer:
-        blocks.append(("code", "\n".join(buffer)))
-    elif buffer:
-        blocks.append(("paragraph", "\n".join(buffer).strip()))
-
-    return [block for block in blocks if block[0] != "spacer" or block[1]]
+_PREVIEW_MD_EXTENSION_CONFIGS = {
+    "pymdownx.tasklist": {"custom_checkbox": True, "clickable_checkbox": False},
+}
 
 
-def _build_docx_bytes(artifact: Artifact, body: str | None = None) -> bytes:
-    document = Document()
-    document.add_heading(artifact.title, level=0)
+_PREVIEW_STYLESHEET = """
+@page { size: Letter; margin: 0.75in; }
+html { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11pt; color: #1f2937; }
+body { margin: 0; }
+.doc { max-width: 100%; line-height: 1.65; }
+.doc > *:first-child { margin-top: 0; }
+.doc h1, .doc h2, .doc h3, .doc h4 { color: #0f172a; font-weight: 600; line-height: 1.25; }
+.doc h1 { font-size: 20pt; margin: 0.35in 0 0.12in; }
+.doc h2 { font-size: 16pt; margin: 0.28in 0 0.1in; }
+.doc h3 { font-size: 13pt; margin: 0.22in 0 0.08in; }
+.doc h4 { font-size: 11.5pt; margin: 0.18in 0 0.06in; }
+.doc p { margin: 0.09in 0; }
+.doc ul, .doc ol { margin: 0.09in 0; padding-left: 0.35in; }
+.doc li { margin: 0.03in 0; }
+.doc li > p { margin: 0.04in 0; }
+.doc blockquote { border-left: 2px solid #cbd5e1; color: #475569; margin: 0.12in 0; padding: 0.02in 0 0.02in 0.18in; }
+.doc hr { border: none; border-top: 1px solid #e2e8f0; margin: 0.2in 0; }
+.doc a { color: #1d4ed8; text-decoration: underline; }
+.doc code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9.5pt;
+  background: #f1f5f9;
+  color: #4338ca;
+  padding: 0.02in 0.05in;
+  border-radius: 3px;
+}
+.doc pre {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.12in 0.16in;
+  overflow-x: auto;
+  margin: 0.12in 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9.5pt;
+  line-height: 1.5;
+  color: #1e293b;
+}
+.doc pre code { background: transparent; color: inherit; padding: 0; border-radius: 0; font-size: inherit; }
+.doc table { border-collapse: collapse; margin: 0.12in 0; width: 100%; font-size: 10pt; }
+.doc th, .doc td { border: 1px solid #e2e8f0; padding: 0.04in 0.08in; text-align: left; vertical-align: top; }
+.doc th { background: #f8fafc; font-weight: 600; color: #0f172a; }
+.doc img { max-width: 100%; height: auto; border-radius: 8px; margin: 0.12in 0; }
+.doc-diagram { margin: 0.18in 0; padding: 0.1in; border: 1px solid #e2e8f0; border-radius: 10px; background: #fafafa; text-align: center; page-break-inside: avoid; break-inside: avoid; }
+.doc-diagram svg, .doc-diagram img { max-width: 100%; max-height: 8in; width: auto; height: auto; }
+.doc strong { font-weight: 600; color: #0f172a; }
+.doc em { font-style: italic; }
+.doc ul.task-list { list-style: none; padding-left: 0.12in; }
+.doc ul.task-list li { padding-left: 0.22in; position: relative; }
+.doc ul.task-list li input[type="checkbox"] { position: absolute; left: 0; top: 0.06in; }
+.workpad-citation {
+  display: inline-block;
+  padding: 0 0.06in;
+  border-radius: 999px;
+  border: 1px solid #c7d9fb;
+  background: #eef5ff;
+  color: #1d4ed8;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9pt;
+  text-decoration: none;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.workpad-citation--stale { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
+.workpad-citation--missing { background: #fef2f2; border-color: #fecaca; color: #991b1b; text-decoration: line-through; }
+"""
 
-    for kind, text in _iter_markdown_blocks(body if body is not None else artifact.content):
-        if kind.startswith("heading_"):
-            level = int(kind.rsplit("_", 1)[1])
-            document.add_heading(text, level=level)
-            continue
-        if kind == "bullet":
-            document.add_paragraph(text, style="List Bullet")
-            continue
-        if kind == "numbered":
-            document.add_paragraph(text, style="List Number")
-            continue
-        if kind == "code":
-            paragraph = document.add_paragraph()
-            run = paragraph.add_run(text or " ")
-            run.font.name = "Courier New"
-            run.font.size = Pt(10)
-            continue
-        if kind == "divider":
-            paragraph = document.add_paragraph()
-            run = paragraph.add_run("—" * 20)
-            continue
-        if kind == "footnote":
-            paragraph = document.add_paragraph()
-            run = paragraph.add_run(text)
-            run.font.size = Pt(9)
-            run.italic = True
-            continue
-        if kind == "paragraph":
-            document.add_paragraph(text)
 
-    output = BytesIO()
-    document.save(output)
-    return output.getvalue()
+def _citation_pill_classes(citation: Citation | None) -> str:
+    base = "workpad-citation"
+    state = (getattr(citation, "resolved_state", None) or "live").lower() if citation else "live"
+    if state == "stale":
+        return f"{base} workpad-citation--stale"
+    if state == "missing":
+        return f"{base} workpad-citation--missing"
+    return base
 
 
-def _build_pdf_bytes(artifact: Artifact, body: str | None = None) -> bytes:
-    output = BytesIO()
-    document = SimpleDocTemplate(
-        output,
-        pagesize=LETTER,
-        leftMargin=0.75 * inch,
-        rightMargin=0.75 * inch,
-        topMargin=0.75 * inch,
-        bottomMargin=0.75 * inch,
-        title=artifact.title,
-    )
-    styles = getSampleStyleSheet()
-    normal = styles["BodyText"]
-    heading_styles = {
-        "heading_1": styles["Heading1"],
-        "heading_2": styles["Heading2"],
-        "heading_3": styles["Heading3"],
-        "heading_4": ParagraphStyle("Heading4Custom", parent=styles["Heading3"], fontSize=12, leading=15),
-    }
-    code_style = ParagraphStyle(
-        "CodeBlock",
-        parent=normal,
-        fontName="Courier",
-        fontSize=9,
-        leading=12,
-        leftIndent=12,
-        backColor="#F4F4F5",
-    )
-    footnote_style = ParagraphStyle(
-        "Footnote",
-        parent=normal,
-        fontSize=8,
-        leading=11,
-        textColor="#4B5563",
+def _citation_pill_html(anchor: str, citation: Citation | None) -> str:
+    if citation is None:
+        label = anchor
+        url = None
+    else:
+        label = _citation_footnote_label(citation)
+        url = _citation_github_url(citation)
+    classes = _citation_pill_classes(citation)
+    label_html = html_escape(label or anchor)
+    if url:
+        return f'<a class="{classes}" href="{html_escape(url)}">{label_html}</a>'
+    return f'<span class="{classes}">{label_html}</span>'
+
+
+def _render_markdown_with_citation_pills(
+    content: str, citations_by_anchor: dict[str, Citation]
+) -> str:
+    """Inline citation tokens as HTML pill spans, matching the live preview.
+
+    Unknown anchors are left as literal tokens; markdown parsing of the rest
+    of the document still runs because we emit raw inline HTML that
+    python-markdown preserves via the `md_in_html` / `extra` extension.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        anchor = match.group(1).lower()
+        citation = citations_by_anchor.get(anchor)
+        if citation is None:
+            return match.group(0)
+        return _citation_pill_html(anchor, citation)
+
+    return _CITATION_TOKEN_RE.sub(_replace, content)
+
+
+def _wrap_preview_document(inner_html: str, title: str) -> str:
+    safe_title = html_escape(title or "Untitled")
+    return (
+        "<!DOCTYPE html>"
+        '<html lang="en"><head><meta charset="utf-8" />'
+        f"<title>{safe_title}</title>"
+        f"<style>{_PREVIEW_STYLESHEET}</style>"
+        f"</head><body>{inner_html}</body></html>"
     )
 
-    story = [Paragraph(artifact.title, styles["Title"]), Spacer(1, 0.2 * inch)]
 
-    for kind, text in _iter_markdown_blocks(body if body is not None else artifact.content):
-        if kind in heading_styles:
-            story.append(Paragraph(text, heading_styles[kind]))
-        elif kind == "bullet":
-            story.append(Paragraph(f"• {text}", normal))
-        elif kind == "numbered":
-            story.append(Paragraph(text, normal))
-        elif kind == "code":
-            story.append(Preformatted(text or " ", code_style))
-        elif kind == "divider":
-            story.append(Spacer(1, 0.08 * inch))
-            story.append(Paragraph("—" * 40, normal))
-        elif kind == "footnote":
-            story.append(Paragraph(text, footnote_style))
-        elif kind == "paragraph":
-            story.append(Paragraph(text.replace("\n", "<br/>"), normal))
-        story.append(Spacer(1, 0.12 * inch))
+def _render_preview_html(
+    artifact: Artifact,
+    markdown_body: str,
+    citations_by_anchor: dict[str, Citation],
+    *,
+    full_document: bool,
+) -> str:
+    if artifact.content_type == ContentType.MARKDOWN.value:
+        source = _render_markdown_with_citation_pills(markdown_body, citations_by_anchor)
+        body_html = markdown(
+            source,
+            extensions=_PREVIEW_MD_EXTENSIONS,
+            extension_configs=_PREVIEW_MD_EXTENSION_CONFIGS,
+            output_format="html",
+        )
+    else:
+        body_html = f"<pre><code>{html_escape(artifact.content)}</code></pre>"
 
-    document.build(story)
-    return output.getvalue()
+    inner = f'<article class="doc">{body_html}</article>'
+    if not full_document:
+        return inner
+    return _wrap_preview_document(inner, artifact.title or "")
+
+
+def _build_docx_from_html(inner_html: str, title: str) -> bytes:
+    import pypandoc
+
+    del title  # The document body already contains its own heading; passing
+    # a metadata title would make Pandoc render it a second time above.
+
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        pypandoc.convert_text(
+            inner_html,
+            to="docx",
+            format="html",
+            outputfile=tmp_path,
+            extra_args=["--standalone"],
+        )
+        return Path(tmp_path).read_bytes()
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def _build_pdf_from_html(inner_html: str, title: str) -> bytes:
+    from weasyprint import HTML  # type: ignore[import-untyped]
+
+    return HTML(string=_wrap_preview_document(inner_html, title)).write_pdf()
+
+
+def _build_docx_bytes(
+    artifact: Artifact,
+    markdown_body: str,
+    citations_by_anchor: dict[str, Citation],
+) -> bytes:
+    inner_html = _render_preview_html(
+        artifact, markdown_body, citations_by_anchor, full_document=False
+    )
+    return _build_docx_from_html(inner_html, artifact.title or "")
+
+
+def _build_pdf_bytes(
+    artifact: Artifact,
+    markdown_body: str,
+    citations_by_anchor: dict[str, Citation],
+) -> bytes:
+    inner_html = _render_preview_html(
+        artifact, markdown_body, citations_by_anchor, full_document=False
+    )
+    return _build_pdf_from_html(inner_html, artifact.title or "")
 
 
 _CITATION_TOKEN_RE = re.compile(r"\[\[cite:([a-z0-9_-]{2,32})\]\]", re.IGNORECASE)
@@ -799,24 +831,72 @@ def export_artifact(session: Session, artifact_id: str, export_format: str) -> t
         ).all()
         citations_by_anchor = {row.anchor: row for row in citation_rows}
 
-    if artifact.content_type == ContentType.MARKDOWN.value and citations_by_anchor:
-        markdown_body = _render_markdown_with_footnotes(artifact.content, citations_by_anchor)
-    else:
-        markdown_body = artifact.content
+    if export_format in {"html", "docx", "pdf"}:
+        if export_format == "html":
+            body = _render_preview_html(
+                artifact, artifact.content, citations_by_anchor, full_document=True
+            )
+            return body, "text/html; charset=utf-8", f"{safe_name}.html"
+        if export_format == "docx":
+            return (
+                _build_docx_bytes(artifact, artifact.content, citations_by_anchor),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                f"{safe_name}.docx",
+            )
+        return (
+            _build_pdf_bytes(artifact, artifact.content, citations_by_anchor),
+            "application/pdf",
+            f"{safe_name}.pdf",
+        )
 
-    if export_format == "html":
-        if artifact.content_type == ContentType.MARKDOWN.value:
-            body = markdown(markdown_body, extensions=["fenced_code", "tables", "footnotes"])
-        else:
-            body = f"<pre>{html_escape(artifact.content)}</pre>"
-        return body, "text/html; charset=utf-8", f"{safe_name}.html"
+    # Plain-text / raw-markdown paths keep footnote-style citation emission so
+    # readers that don't render inline HTML still see the citation metadata.
+    if citations_by_anchor and artifact.content_type == ContentType.MARKDOWN.value:
+        text_body = _render_markdown_with_footnotes(artifact.content, citations_by_anchor)
+    else:
+        text_body = artifact.content
+
     if export_format == "text":
-        return markdown_body, "text/plain; charset=utf-8", f"{safe_name}.txt"
+        return text_body, "text/plain; charset=utf-8", f"{safe_name}.txt"
+    return text_body, "text/markdown; charset=utf-8", f"{safe_name}.md"
+
+
+def export_artifact_from_rendered_html(
+    session: Session,
+    artifact_id: str,
+    export_format: str,
+    inner_html: str,
+) -> tuple[bytes | str, str, str]:
+    """Convert client-rendered HTML (with mermaid/KaTeX SVGs baked in) to the
+    requested binary format. The caller is responsible for producing HTML that
+    matches the live preview; the backend only wraps it in the preview
+    stylesheet and hands it to WeasyPrint / Pandoc.
+    """
+
+    artifact = get_artifact_or_404(session, artifact_id)
+    safe_name = _safe_filename(artifact.title)
+    title = artifact.title or ""
+    wrapped = f'<article class="doc">{inner_html}</article>'
+
     if export_format == "docx":
-        return _build_docx_bytes(artifact, markdown_body), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", f"{safe_name}.docx"
+        return (
+            _build_docx_from_html(wrapped, title),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            f"{safe_name}.docx",
+        )
     if export_format == "pdf":
-        return _build_pdf_bytes(artifact, markdown_body), "application/pdf", f"{safe_name}.pdf"
-    return markdown_body, "text/markdown; charset=utf-8", f"{safe_name}.md"
+        return (
+            _build_pdf_from_html(wrapped, title),
+            "application/pdf",
+            f"{safe_name}.pdf",
+        )
+    if export_format == "html":
+        return (
+            _wrap_preview_document(wrapped, title),
+            "text/html; charset=utf-8",
+            f"{safe_name}.html",
+        )
+    raise ValueError(f"unsupported rendered export format: {export_format}")
 
 
 def current_artifact_id_from_payload(payload: Any) -> str | None:
