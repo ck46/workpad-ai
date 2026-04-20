@@ -1249,7 +1249,9 @@ type StickyScrollController = {
   contentRef: React.MutableRefObject<HTMLDivElement | null>;
   onScroll: (event: React.UIEvent<HTMLDivElement>) => void;
   scrollToBottom: () => void;
+  scrollToTop: () => void;
   showJump: boolean;
+  showJumpTop: boolean;
 };
 
 /**
@@ -1270,6 +1272,20 @@ function useStickyScroll(threshold: number = 96): StickyScrollController {
   const stickyRef = useRef(true);
   const programmaticScrollRef = useRef(false);
   const [showJump, setShowJump] = useState(false);
+  const [showJumpTop, setShowJumpTop] = useState(false);
+
+  const syncJumpButtons = useCallback(
+    (element: HTMLElement) => {
+      const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+      const distanceFromTop = element.scrollTop;
+      const canScroll = element.scrollHeight > element.clientHeight;
+      const farFromBottom = canScroll && distanceFromBottom > threshold;
+      const farFromTop = canScroll && distanceFromTop > threshold;
+      setShowJump((previous) => (previous === farFromBottom ? previous : farFromBottom));
+      setShowJumpTop((previous) => (previous === farFromTop ? previous : farFromTop));
+    },
+    [threshold],
+  );
 
   const pinToBottom = useCallback(() => {
     const element = containerRef.current;
@@ -1290,20 +1306,25 @@ function useStickyScroll(threshold: number = 96): StickyScrollController {
   // catches new messages, deltas, and any DOM structure changes driven by
   // state updates.
   useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
     if (stickyRef.current) pinToBottom();
+    syncJumpButtons(element);
   });
 
   // Also pin when the content grows without a React re-render — things like
   // highlight.js applying classes, katex laying out math, images loading.
   useEffect(() => {
     const node = contentRef.current;
-    if (!node) return;
+    const container = containerRef.current;
+    if (!node || !container) return;
     const observer = new ResizeObserver(() => {
       if (stickyRef.current) pinToBottom();
+      syncJumpButtons(container);
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [pinToBottom]);
+  }, [pinToBottom, syncJumpButtons]);
 
   const onScroll = useCallback(
     (event: React.UIEvent<HTMLDivElement>) => {
@@ -1312,38 +1333,66 @@ function useStickyScroll(threshold: number = 96): StickyScrollController {
       const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
       const near = distanceFromBottom < threshold;
       stickyRef.current = near;
-      setShowJump((previous) => (previous === !near ? previous : !near));
+      syncJumpButtons(element);
     },
-    [threshold],
+    [syncJumpButtons, threshold],
   );
 
   const scrollToBottom = useCallback(() => {
     stickyRef.current = true;
-    setShowJump(false);
     pinToBottom();
-  }, [pinToBottom]);
+    const element = containerRef.current;
+    if (element) syncJumpButtons(element);
+  }, [pinToBottom, syncJumpButtons]);
 
-  return { containerRef, contentRef, onScroll, scrollToBottom, showJump };
+  const scrollToTop = useCallback(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    // Disengage sticky so streaming deltas don't yank us back down while
+    // the user is reading the top of the document.
+    stickyRef.current = false;
+    programmaticScrollRef.current = true;
+    element.scrollTop = 0;
+    window.requestAnimationFrame(() => {
+      programmaticScrollRef.current = false;
+    });
+    syncJumpButtons(element);
+  }, [syncJumpButtons]);
+
+  return {
+    containerRef,
+    contentRef,
+    onScroll,
+    scrollToBottom,
+    scrollToTop,
+    showJump,
+    showJumpTop,
+  };
 }
 
-function JumpToLatestButton({
+function ScrollJumpButton({
+  direction,
   onClick,
-  label = "Jump to latest",
+  label,
   className = "",
 }: {
+  direction: "up" | "down";
   onClick: () => void;
   label?: string;
   className?: string;
 }) {
+  const defaultLabel = direction === "up" ? "Jump to top" : "Jump to latest";
+  const finalLabel = label ?? defaultLabel;
+  const Icon = direction === "up" ? ArrowUp : ArrowDown;
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={label}
-      className={`inline-flex items-center gap-1 rounded-full border border-white/10 bg-chrome-900/90 px-3 py-1.5 text-xs text-slate-100 shadow-panel backdrop-blur transition hover:border-white/20 hover:bg-chrome-800 ${className}`}
+      aria-label={finalLabel}
+      title={finalLabel}
+      className={`inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-chrome-900/90 text-slate-100 shadow-panel backdrop-blur transition hover:border-white/20 hover:bg-chrome-800 ${className}`}
     >
-      <ArrowDown size={12} />
-      {label}
+      <Icon size={16} />
     </button>
   );
 }
@@ -1369,7 +1418,8 @@ function ChatScrollRegion({ emptyState }: { emptyState?: React.ReactNode }) {
       </div>
       {sticky.showJump ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-          <JumpToLatestButton
+          <ScrollJumpButton
+            direction="down"
             onClick={sticky.scrollToBottom}
             className="pointer-events-auto"
           />
@@ -3106,13 +3156,24 @@ function WorkpadPane() {
         )}
         </div>
         </div>
-        {canvasSticky.showJump && artifact.content_type === "markdown" ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
-            <JumpToLatestButton
-              onClick={canvasSticky.scrollToBottom}
-              label="Jump to end"
-              className="pointer-events-auto"
-            />
+        {artifact.content_type === "markdown" &&
+        (canvasSticky.showJumpTop || canvasSticky.showJump) ? (
+          <div className="pointer-events-none absolute bottom-4 right-4 flex flex-col items-end gap-2">
+            {canvasSticky.showJumpTop ? (
+              <ScrollJumpButton
+                direction="up"
+                onClick={canvasSticky.scrollToTop}
+                className="pointer-events-auto"
+              />
+            ) : null}
+            {canvasSticky.showJump ? (
+              <ScrollJumpButton
+                direction="down"
+                onClick={canvasSticky.scrollToBottom}
+                label="Jump to end"
+                className="pointer-events-auto"
+              />
+            ) : null}
           </div>
         ) : null}
       </div>
