@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { Editor as MonacoEditor } from "@monaco-editor/react";
 import type { editor as MonacoEditorNS } from "monaco-editor";
@@ -1245,7 +1245,8 @@ function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
 }
 
 type StickyScrollController = {
-  scrollRef: (node: HTMLDivElement | null) => void;
+  containerRef: React.MutableRefObject<HTMLDivElement | null>;
+  contentRef: React.MutableRefObject<HTMLDivElement | null>;
   onScroll: (event: React.UIEvent<HTMLDivElement>) => void;
   scrollToBottom: () => void;
   showJump: boolean;
@@ -1254,48 +1255,75 @@ type StickyScrollController = {
 /**
  * Keep a scrollable <div> pinned to its own bottom while new content arrives —
  * the classic "stick to bottom unless the user scrolled up" chat pattern.
- * Runs on every render via useLayoutEffect so streaming deltas follow without
- * a visible jump. `showJump` flips true when the user scrolls more than
- * `threshold` pixels away from the bottom, intended for a "Jump to latest"
- * affordance.
+ *
+ * Consumers attach ``containerRef`` to the scrolling element and
+ * ``contentRef`` to the growing child inside it. The hook watches the content
+ * via ``ResizeObserver`` so layout shifts that happen *after* render (syntax
+ * highlighting, katex, image loads) still keep us pinned. ``onScroll`` reads
+ * distance-from-bottom to decide whether the user has scrolled away; a
+ * ``programmaticScrollRef`` guard ignores scroll events that come from our own
+ * ``scrollToBottom`` call so we never self-toggle the sticky flag.
  */
 function useStickyScroll(threshold: number = 96): StickyScrollController {
-  const elementRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const stickyRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
   const [showJump, setShowJump] = useState(false);
 
-  useLayoutEffect(() => {
-    const element = elementRef.current;
+  const pinToBottom = useCallback(() => {
+    const element = containerRef.current;
     if (!element) return;
-    if (stickyRef.current) {
-      element.scrollTop = element.scrollHeight;
-    }
+    // Skip when there's nothing to scroll; prevents spurious scroll events
+    // from our own write while content is still mounting.
+    if (element.scrollHeight <= element.clientHeight) return;
+    programmaticScrollRef.current = true;
+    element.scrollTop = element.scrollHeight;
+    // Release the guard on the next frame — the native "scroll" event from
+    // our write is delivered before the frame ends.
+    window.requestAnimationFrame(() => {
+      programmaticScrollRef.current = false;
+    });
+  }, []);
+
+  // Pin after every React render when the sticky flag is engaged. This
+  // catches new messages, deltas, and any DOM structure changes driven by
+  // state updates.
+  useLayoutEffect(() => {
+    if (stickyRef.current) pinToBottom();
   });
 
-  function scrollRef(node: HTMLDivElement | null) {
-    elementRef.current = node;
-    if (node && stickyRef.current) {
-      node.scrollTop = node.scrollHeight;
-    }
-  }
+  // Also pin when the content grows without a React re-render — things like
+  // highlight.js applying classes, katex laying out math, images loading.
+  useEffect(() => {
+    const node = contentRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver(() => {
+      if (stickyRef.current) pinToBottom();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [pinToBottom]);
 
-  function onScroll(event: React.UIEvent<HTMLDivElement>) {
-    const element = event.currentTarget;
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    const near = distanceFromBottom < threshold;
-    stickyRef.current = near;
-    setShowJump((previous) => (previous === !near ? previous : !near));
-  }
+  const onScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      if (programmaticScrollRef.current) return;
+      const element = event.currentTarget;
+      const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+      const near = distanceFromBottom < threshold;
+      stickyRef.current = near;
+      setShowJump((previous) => (previous === !near ? previous : !near));
+    },
+    [threshold],
+  );
 
-  function scrollToBottom() {
-    const element = elementRef.current;
-    if (!element) return;
-    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  const scrollToBottom = useCallback(() => {
     stickyRef.current = true;
     setShowJump(false);
-  }
+    pinToBottom();
+  }, [pinToBottom]);
 
-  return { scrollRef, onScroll, scrollToBottom, showJump };
+  return { containerRef, contentRef, onScroll, scrollToBottom, showJump };
 }
 
 function JumpToLatestButton({
@@ -1322,15 +1350,6 @@ function JumpToLatestButton({
 
 function ChatScrollRegion({ emptyState }: { emptyState?: React.ReactNode }) {
   const messages = useWorkbenchStore((state) => state.messages);
-  const status = useWorkbenchStore((state) => state.status);
-  const lastMessage = messages[messages.length - 1];
-  // Subscribe to the streaming content of the last assistant turn so the
-  // useLayoutEffect in useStickyScroll re-runs on every delta, not just on
-  // new-message events.
-  const lastContentLength = lastMessage?.content.length ?? 0;
-  void lastContentLength;
-  void status;
-
   const sticky = useStickyScroll();
 
   if (messages.length === 0 && emptyState) {
@@ -1340,11 +1359,13 @@ function ChatScrollRegion({ emptyState }: { emptyState?: React.ReactNode }) {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
-        ref={sticky.scrollRef}
+        ref={sticky.containerRef}
         onScroll={sticky.onScroll}
         className="h-full overflow-auto pr-2"
       >
-        <div className="mx-auto max-w-4xl space-y-6">{renderMessageList(messages)}</div>
+        <div ref={sticky.contentRef} className="mx-auto max-w-4xl space-y-6">
+          {renderMessageList(messages)}
+        </div>
       </div>
       {sticky.showJump ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
@@ -3040,10 +3061,11 @@ function WorkpadPane() {
       <DriftBanner />
       <div className="relative flex-1 overflow-hidden">
         <div
-          ref={canvasSticky.scrollRef}
+          ref={canvasSticky.containerRef}
           onScroll={canvasSticky.onScroll}
           className="h-full overflow-auto p-5"
         >
+        <div ref={canvasSticky.contentRef}>
         {artifact.content_type === "markdown" ? (
           isPreviewing ? (
             <MarkdownWithDiagrams content={artifact.content} className={markdownPreviewClassName(canvasTheme)} />
@@ -3082,6 +3104,7 @@ function WorkpadPane() {
             />
           </div>
         )}
+        </div>
         </div>
         {canvasSticky.showJump && artifact.content_type === "markdown" ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
