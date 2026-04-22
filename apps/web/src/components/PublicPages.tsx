@@ -145,7 +145,7 @@ function MarketingHero({ nav, isAuthed }: { nav: Nav; isAuthed: boolean }) {
         className="m-0 mb-8 mt-6 max-w-[60ch] text-[19px] leading-[1.5] text-ink-2"
         style={{ textWrap: "pretty" }}
       >
-        Workpad is a personal workspace for source-grounded artifacts. Draft RFCs, ADRs,
+        Workpad is a personal workspace for source-grounded pads. Draft RFCs, ADRs,
         design notes, and run notes against your actual repo, with citations that stay
         live as the code moves.
       </p>
@@ -341,7 +341,7 @@ function MarketingFeatures() {
     {
       k: "Library-first",
       t: "Your library, not your chat history.",
-      d: "Artifacts are the primary object. Threads exist, but they're how you drive AI — not how you find work you did last month.",
+      d: "Pads are the primary object. Threads exist, but they're how you drive AI — not how you find work you did last month.",
     },
     {
       k: "Source-grounded",
@@ -350,13 +350,13 @@ function MarketingFeatures() {
     },
     {
       k: "Editorial",
-      t: "A paper for each artifact.",
+      t: "A paper for each pad.",
       d: "RFCs, ADRs, design notes, run notes — each with its own surface, status model, and revision history. Built for re-reading, not just writing.",
     },
     {
       k: "Ask across",
       t: "Synthesis beats search.",
-      d: "Ask a question across your whole library. Get an answer grounded in the artifacts you already wrote, with inline citations you can click through.",
+      d: "Ask a question across your whole library. Get an answer grounded in the pads you already wrote, with inline citations you can click through.",
     },
   ];
   return (
@@ -391,7 +391,7 @@ function MarketingTypes() {
   ];
   return (
     <section className="mx-auto my-20 max-w-[1200px] px-6 sm:px-8">
-      <div className="wp-overline mb-2.5">Four artifact types</div>
+      <div className="wp-overline mb-2.5">Four pad types</div>
       <h2
         className="m-0 mb-9 max-w-[18ch] font-serif font-medium text-ink-1"
         style={{ fontSize: 44, letterSpacing: "-0.02em", textWrap: "balance" }}
@@ -605,7 +605,7 @@ function AuthManifest() {
             lineHeight: 1.55,
           }}
         >
-          Workpad is a personal workspace for source-grounded artifacts. RFCs, ADRs,
+          Workpad is a personal workspace for source-grounded pads. RFCs, ADRs,
           design notes, run notes — each one tied to the repo it was written against,
           and each citation still live in a year.
         </p>

@@ -72,7 +72,7 @@ function greeting(): string {
 }
 
 function artifactStamp(a: ArtifactListItem): string {
-  const type = (a.artifact_type || a.spec_type || a.content_type || "artifact").toUpperCase();
+  const type = (a.artifact_type || a.spec_type || a.content_type || "pad").toUpperCase();
   return `${type}-${a.id.slice(0, 6)}`;
 }
 
@@ -153,10 +153,10 @@ export function LibraryHome({
         </h1>
         <p className="mt-2 max-w-[56ch] text-[15px] text-ink-2">
           {totalArtifacts === 0 ? (
-            <>No artifacts yet. Draft your first from a repo and transcript, or start writing manually.</>
+            <>No pads yet. Draft your first from a repo and transcript, or start writing manually.</>
           ) : (
             <>
-              {totalArtifacts} {totalArtifacts === 1 ? "artifact" : "artifacts"}
+              {totalArtifacts} {totalArtifacts === 1 ? "pad" : "pads"}
               {draftCount ? <> · {draftCount} in draft</> : null}
               .
             </>
@@ -169,7 +169,7 @@ export function LibraryHome({
             className="inline-flex items-center gap-2 rounded-md bg-signal px-4 py-2 text-[13px] font-medium text-white transition hover:bg-signal-hover"
           >
             <Plus size={14} />
-            New artifact
+            New pad
           </button>
           <button
             type="button"
@@ -212,7 +212,7 @@ export function LibraryHome({
 
       <section>
         <div className="mb-3.5 flex items-center gap-3">
-          <h2 className="text-[15px] font-semibold tracking-tight text-ink-1">All artifacts</h2>
+          <h2 className="text-[15px] font-semibold tracking-tight text-ink-1">All pads</h2>
           <div className="ml-auto inline-flex items-center gap-0.5 rounded-md bg-shell-2 p-0.5">
             {(
               [
@@ -281,7 +281,7 @@ export function LibraryHome({
               Nothing here yet.
             </div>
             <div className="text-[13px] text-ink-2">
-              Create a new artifact or switch the filter to see everything.
+              Create a new pad or switch the filter to see everything.
             </div>
           </div>
         ) : view === "list" ? (
@@ -327,7 +327,7 @@ function RecentTile({ a, onClick }: { a: ArtifactListItem; onClick: () => void }
         className="font-serif text-[17px] font-medium leading-tight text-paper-ink"
         style={{ letterSpacing: "-0.005em", textWrap: "pretty" }}
       >
-        {a.title || "Untitled artifact"}
+        {a.title || "Untitled pad"}
       </div>
       <div
         className="mt-auto flex items-center gap-2 font-mono text-[11px]"
@@ -374,7 +374,7 @@ function ArtifactRow({
           className="truncate text-[14px] font-medium text-ink-1"
           style={{ letterSpacing: "-0.005em" }}
         >
-          {a.title || "Untitled artifact"}
+          {a.title || "Untitled pad"}
         </div>
       </div>
       <div className="truncate font-mono text-[11.5px] text-ink-2">{a.content_type}</div>
@@ -411,7 +411,7 @@ function ArtifactCard({ a, onClick }: { a: ArtifactListItem; onClick: () => void
         className="text-[15px] font-semibold leading-tight text-ink-1"
         style={{ letterSpacing: "-0.01em", textWrap: "pretty" }}
       >
-        {a.title || "Untitled artifact"}
+        {a.title || "Untitled pad"}
       </div>
       {a.summary ? (
         <div
