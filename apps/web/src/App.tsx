@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { useAuth, type ProjectSummary } from "./lib/auth";
-import { createProject, listProjects } from "./lib/projects";
+import {
+  createInvite,
+  createProject,
+  getProjectDetail,
+  listProjects,
+  type ProjectDetail as ProjectDetailPayload,
+} from "./lib/projects";
 import { useSystemTheme, type SystemTheme } from "./lib/systemTheme";
 import { LibraryHome, type ArtifactListItem } from "./components/LibraryHome";
 import { ArtifactDiffView } from "./components/ArtifactDiffView";
@@ -4299,6 +4305,343 @@ function DraftProgress() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// NewProjectModal — simple create-a-project surface triggered from the
+// ProjectSwitcher's "New project" entry. Closes on success and switches the
+// workbench to the new project.
+// ---------------------------------------------------------------------------
+function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const setCurrentProject = useWorkbenchStore((state) => state.setCurrentProject);
+  const upsertProject = useWorkbenchStore((state) => state.upsertProject);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setName("");
+      setError(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !busy) onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, busy, onClose]);
+
+  if (!open) return null;
+
+  const canSubmit = name.trim().length > 0 && !busy;
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const project = await createProject(name.trim());
+      upsertProject(project);
+      await setCurrentProject(project.id);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create the project.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+      onClick={() => {
+        if (!busy) onClose();
+      }}
+    >
+      <div
+        className="w-full max-w-md rounded-[20px] border border-shell-border bg-shell-1 p-6 shadow-panel"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="wp-overline mb-1.5">New project</div>
+        <h2 className="m-0 font-serif text-[22px] font-medium text-ink-1" style={{ letterSpacing: "-0.01em" }}>
+          Name your project.
+        </h2>
+        <p className="mt-2 text-[13px] text-ink-2">
+          Projects hold pads, threads, and sources. You'll be the owner and can
+          invite teammates later.
+        </p>
+        <form onSubmit={submit} className="mt-5 flex flex-col gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+              Project name
+            </span>
+            <input
+              autoFocus
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Platform, acme-api, Growth experiments…"
+              disabled={busy}
+              className="w-full rounded-md border border-shell-border-strong bg-shell-2 px-3 py-2.5 text-[14px] text-ink-1 outline-none transition placeholder:text-ink-3 focus:border-signal disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+          {error ? (
+            <div className="rounded-md border border-state-missing-soft bg-state-missing-soft px-3 py-2 text-[12.5px] text-state-missing-ink" role="alert">
+              {error}
+            </div>
+          ) : null}
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="rounded-md border border-shell-border-strong bg-shell-1 px-3 py-2 text-[13px] font-medium text-ink-1 transition hover:bg-shell-2 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className="inline-flex items-center gap-2 rounded-md bg-signal px-3.5 py-2 text-[13px] font-medium text-white transition hover:bg-signal-hover disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy ? <LoaderCircle size={13} className="animate-spin" /> : null}
+              Create project
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ProjectSettingsModal — members list, role badges, pending invites, and
+// an owner-only invite form. v1 has no mailer so issued invites return a
+// ``accept_url`` that the owner copies manually.
+// ---------------------------------------------------------------------------
+function ProjectSettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const currentProjectId = useWorkbenchStore((state) => state.currentProjectId);
+  const projects = useWorkbenchStore((state) => state.projects);
+  const [detail, setDetail] = useState<ProjectDetailPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const current = projects.find((p) => p.id === currentProjectId) ?? null;
+
+  useEffect(() => {
+    if (!open || !currentProjectId) return;
+    let alive = true;
+    setLoading(true);
+    setLoadError(null);
+    setDetail(null);
+    (async () => {
+      try {
+        const d = await getProjectDetail(currentProjectId);
+        if (alive) setDetail(d);
+      } catch (err) {
+        if (alive) {
+          setLoadError(err instanceof Error ? err.message : "Could not load the project.");
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open, currentProjectId]);
+
+  useEffect(() => {
+    if (!open) {
+      setInviteEmail("");
+      setInviteError(null);
+      setCopied(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const isOwner = current?.role === "owner";
+
+  async function handleInvite(event: React.FormEvent) {
+    event.preventDefault();
+    if (!currentProjectId || inviting) return;
+    const email = inviteEmail.trim();
+    if (!email) return;
+    setInviting(true);
+    setInviteError(null);
+    try {
+      const response = await createInvite(currentProjectId, email);
+      // Refresh the detail so the new invite appears in pending_invites.
+      const refreshed = await getProjectDetail(currentProjectId);
+      setDetail(refreshed);
+      setInviteEmail("");
+      // Copy the accept URL immediately so the owner can paste it into
+      // whatever channel they use until a mailer is wired up.
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(response.accept_url);
+          setCopied(email);
+          window.setTimeout(() => setCopied(null), 2500);
+        } catch {
+          // non-fatal
+        }
+      }
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "Could not create the invite.");
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-[20px] border border-shell-border bg-shell-1 shadow-panel"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-shell-border px-6 py-4">
+          <div>
+            <div className="wp-overline mb-1.5">Project settings</div>
+            <div className="font-serif text-[20px] font-medium text-ink-1" style={{ letterSpacing: "-0.01em" }}>
+              {current?.name ?? "Project"}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1.5 text-ink-3 transition hover:bg-shell-2 hover:text-ink-1"
+            aria-label="Close"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-auto px-6 py-5">
+          {loading ? (
+            <div className="inline-flex items-center gap-2 font-mono text-[12px] text-ink-3">
+              <LoaderCircle size={13} className="animate-spin" />
+              Loading…
+            </div>
+          ) : loadError ? (
+            <div className="rounded-md border border-state-missing-soft bg-state-missing-soft px-3 py-2 text-[12.5px] text-state-missing-ink">
+              {loadError}
+            </div>
+          ) : detail ? (
+            <div className="flex flex-col gap-6">
+              <section>
+                <div className="wp-overline mb-2">Members</div>
+                <ul className="flex flex-col gap-1">
+                  {detail.members.map((m) => (
+                    <li
+                      key={m.user_id}
+                      className="flex items-center gap-3 rounded-md border border-shell-border bg-shell-0 px-3 py-2"
+                    >
+                      <div className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-paper-2 font-mono text-[10px] font-semibold text-paper-ink">
+                        {(m.name || m.email).slice(0, 1).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-medium text-ink-1">
+                          {m.name?.trim() || m.email.split("@")[0]}
+                        </div>
+                        <div className="truncate font-mono text-[11px] text-ink-3">{m.email}</div>
+                      </div>
+                      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+                        {m.role}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
+              {detail.pending_invites.length > 0 ? (
+                <section>
+                  <div className="wp-overline mb-2">Pending invites</div>
+                  <ul className="flex flex-col gap-1">
+                    {detail.pending_invites.map((i) => (
+                      <li
+                        key={i.id}
+                        className="flex items-center gap-3 rounded-md border border-dashed border-shell-border px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-2">
+                          {i.email}
+                        </div>
+                        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+                          expires {new Date(i.expires_at).toLocaleDateString()}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
+              {isOwner ? (
+                <section>
+                  <div className="wp-overline mb-2">Invite a teammate</div>
+                  <form onSubmit={handleInvite} className="flex flex-col gap-2.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        placeholder="teammate@example.com"
+                        disabled={inviting}
+                        className="flex-1 rounded-md border border-shell-border-strong bg-shell-2 px-3 py-2 text-[13px] text-ink-1 outline-none transition placeholder:text-ink-3 focus:border-signal disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!inviteEmail.trim() || inviting}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-signal px-3 py-2 text-[12.5px] font-medium text-white transition hover:bg-signal-hover disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {inviting ? <LoaderCircle size={12} className="animate-spin" /> : null}
+                        Create invite
+                      </button>
+                    </div>
+                    {inviteError ? (
+                      <div className="rounded-md border border-state-missing-soft bg-state-missing-soft px-3 py-2 text-[12.5px] text-state-missing-ink">
+                        {inviteError}
+                      </div>
+                    ) : null}
+                    {copied ? (
+                      <div className="rounded-md border border-state-live-soft bg-state-live-soft px-3 py-2 text-[12.5px] text-state-live-ink">
+                        Accept URL copied to clipboard for{" "}
+                        <span className="font-mono">{copied}</span>. Paste it wherever
+                        you talk to them — there's no mailer in v1.
+                      </div>
+                    ) : null}
+                    <div className="font-mono text-[11px] text-ink-3">
+                      Invites expire in 14 days and can only be accepted once.
+                    </div>
+                  </form>
+                </section>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type SettingsInfo = { has_github_default_token: boolean; has_openai_api_key: boolean };
 
 function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -4906,6 +5249,14 @@ function App() {
         )}
       </main>
       <NewSpecModal open={newSpecOpen} onClose={() => setNewSpecOpen(false)} />
+      <NewProjectModal
+        open={newProjectOpen}
+        onClose={() => setNewProjectOpen(false)}
+      />
+      <ProjectSettingsModal
+        open={projectSettingsOpen}
+        onClose={() => setProjectSettingsOpen(false)}
+      />
       <Toaster />
     </div>
   );
