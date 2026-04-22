@@ -917,7 +917,7 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
         error: null,
       });
     } catch (error) {
-      set({ error: error instanceof Error ? error.message : "Could not refresh the workpad." });
+      set({ error: error instanceof Error ? error.message : "Could not refresh the pad." });
     }
   },
 
@@ -2172,7 +2172,7 @@ function CitationPopover({
           </div>
           <div className="mt-2 text-xs text-slate-400">
             Anchor <code className="font-mono">{anchor}</code> couldn't be matched against this
-            artifact. Reopen the workpad or run Verify citations to refresh.
+            pad. Reopen it or run Verify citations to refresh.
           </div>
         </>
       )}
@@ -2945,9 +2945,29 @@ function markdownPreviewClassName(_theme: CanvasTheme): string {
   return "tiptap tiptap-light min-h-[480px] bg-transparent";
 }
 
+// Walk the ProseMirror doc for the first top-level heading and return its
+// text content, trimmed and length-capped. Returns null if there isn't one.
+// Used so the outer title input can be dropped: the document's own h1 is
+// the source of truth, the chrome just reflects it.
+function extractFirstHeading(editor: TiptapEditorType): string | null {
+  const doc = editor.state.doc;
+  for (let i = 0; i < doc.childCount; i++) {
+    const node = doc.child(i);
+    if (node.type.name === "heading" && (node.attrs.level ?? 1) === 1) {
+      const text = node.textContent.trim();
+      if (text) {
+        return text.slice(0, 240);
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
 function MarkdownEditor({
   value,
   onChange,
+  onTitleDetected,
   readOnly,
   artifactId,
   theme,
@@ -2955,6 +2975,7 @@ function MarkdownEditor({
 }: {
   value: string;
   onChange: (value: string) => void;
+  onTitleDetected?: (title: string) => void;
   readOnly: boolean;
   artifactId: string;
   theme: CanvasTheme;
@@ -2962,6 +2983,9 @@ function MarkdownEditor({
 }) {
   const lastSyncedValue = useRef(value);
   const syncingExternalValueRef = useRef<string | null>(null);
+  const lastEmittedTitle = useRef<string | null>(null);
+  const onTitleDetectedRef = useRef(onTitleDetected);
+  onTitleDetectedRef.current = onTitleDetected;
   const themeRef = useRef(theme);
   themeRef.current = theme;
 
@@ -2995,6 +3019,15 @@ function MarkdownEditor({
         }
         lastSyncedValue.current = markdownValue;
         onChange(markdownValue);
+        // Pull the first top-level heading out of the document so the chrome
+        // (breadcrumb, sidebar, library) can treat it as the authoritative
+        // title. Empty h1 leaves the title alone so we don't churn it while
+        // someone is mid-typing a new heading.
+        const firstHeading = extractFirstHeading(activeEditor);
+        if (firstHeading && firstHeading !== lastEmittedTitle.current) {
+          lastEmittedTitle.current = firstHeading;
+          onTitleDetectedRef.current?.(firstHeading);
+        }
       },
     },
     [artifactId],
@@ -3142,12 +3175,12 @@ function WorkpadPane() {
           <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-lg border border-shell-border bg-shell-2">
             <FileText size={26} className="text-ink-3" />
           </div>
-          <div className="wp-overline mb-3">Artifact workspace</div>
+          <div className="wp-overline mb-3">Pad workspace</div>
           <h2 className="font-serif text-[28px] font-medium leading-tight tracking-tight text-ink-1">
-            No artifact open.
+            No pad open.
           </h2>
           <p className="mt-4 text-[14px] leading-relaxed text-ink-2">
-            Draft from a repo and transcript, or start one manually. Artifacts render on paper here once the model produces durable output.
+            Draft from a repo and transcript, or start one manually. Pads render on paper here once the model produces durable output.
           </p>
         </div>
       </div>
@@ -3282,7 +3315,7 @@ function WorkpadPane() {
       return;
     }
     if (artifact.dirty) {
-      const ok = typeof window === "undefined" ? true : window.confirm("Discard unsaved canvas edits and reload from server?");
+      const ok = typeof window === "undefined" ? true : window.confirm("Discard unsaved pad edits and reload from server?");
       if (!ok) {
         return;
       }
@@ -3468,23 +3501,6 @@ function WorkpadPane() {
           {isLightCanvas ? <Moon size={14} /> : <Sun size={14} />}
         </PaperIconButton>
       </div>
-      <div className="flex-none border-b border-shell-border bg-shell-0 px-6 pb-3 pt-5">
-        <input
-          value={artifact.title}
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="Untitled artifact"
-          className="w-full truncate border-0 bg-transparent font-serif text-[28px] font-medium tracking-tight text-ink-1 outline-none placeholder:text-ink-3"
-          style={{ letterSpacing: "-0.02em", lineHeight: 1.2 }}
-        />
-        <div className="mt-1 font-mono text-[11px] text-ink-3">
-          {artifact.content_type} ·{" "}
-          {artifact.dirty ? (
-            <span className="text-state-stale-ink">saving…</span>
-          ) : (
-            <span className="text-state-live">saved</span>
-          )}
-        </div>
-      </div>
       <DriftBanner />
       <div className="relative flex-1 overflow-hidden bg-shell-0">
         <div
@@ -3511,6 +3527,11 @@ function WorkpadPane() {
                 readOnly={isReadOnly}
                 value={artifact.content}
                 onChange={setContent}
+                onTitleDetected={(next) => {
+                  if (next && next !== artifact.title) {
+                    setTitle(next);
+                  }
+                }}
                 theme={canvasTheme}
                 onEditorReady={setMarkdownEditor}
               />
@@ -3629,7 +3650,7 @@ function ConversationCard({ conversation, active }: { conversation: Conversation
           ) : null}
         </div>
         <div className="mt-0.5 flex items-center gap-2 truncate font-mono text-[10px] text-ink-3">
-          <span>{artifactCount} {artifactCount === 1 ? "artifact" : "artifacts"}</span>
+          <span>{artifactCount} {artifactCount === 1 ? "pad" : "pads"}</span>
           <span>·</span>
           <span>{formatTimestamp(conversation.updated_at)}</span>
         </div>
@@ -3715,8 +3736,8 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
         <button
           type="button"
           onClick={() => void startNewConversation()}
-          title="New artifact"
-          aria-label="New artifact"
+          title="New pad"
+          aria-label="New pad"
           className="flex h-8 w-8 items-center justify-center rounded-md bg-signal text-white transition hover:bg-signal-hover"
         >
           <Plus size={16} />
@@ -3741,7 +3762,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
         className="mb-3 flex w-full items-center justify-center gap-2 rounded-lg bg-signal px-3 py-2 text-[13px] font-medium text-white transition hover:bg-signal-hover"
       >
         <Plus size={14} />
-        New artifact
+        New pad
       </button>
 
       <div className="px-2">
@@ -4164,7 +4185,7 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
       <div className="w-full max-w-2xl rounded-[28px] border border-shell-border bg-shell-1 p-6 shadow-panel">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-xs uppercase tracking-[0.22em] text-slate-500">New artifact</div>
+            <div className="text-xs uppercase tracking-[0.22em] text-slate-500">New pad</div>
             <div className="mt-1 flex items-center gap-2 text-lg font-semibold text-slate-50">
               <NotebookPen size={18} />
               Draft an RFC
@@ -4362,15 +4383,83 @@ function ChatHeaderIcon({
   );
 }
 
+function BreadcrumbTitle({
+  title,
+  onRename,
+}: {
+  title: string;
+  onRename?: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(title);
+    }
+  }, [title, editing]);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  function commit() {
+    const next = draft.trim();
+    setEditing(false);
+    if (!next || next === title) return;
+    onRename?.(next);
+  }
+
+  if (editing && onRename) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setEditing(false);
+          }
+        }}
+        className="max-w-[520px] truncate border-b border-signal bg-transparent font-mono text-[12px] font-medium text-ink-1 outline-none"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onRename && setEditing(true)}
+      title={onRename ? "Rename" : undefined}
+      disabled={!onRename}
+      className="truncate font-medium text-ink-1 transition hover:text-signal-press disabled:cursor-default disabled:hover:text-ink-1"
+      style={{ maxWidth: 520 }}
+    >
+      {title}
+    </button>
+  );
+}
+
 function AppHeader({
   showWorkpad,
   activeTitle,
+  onRenameActive,
   onNewSpec,
   sidebarCollapsed,
   onToggleSidebar,
 }: {
   showWorkpad: boolean;
   activeTitle: string | null;
+  onRenameActive?: (title: string) => void;
   onNewSpec: () => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
@@ -4384,9 +4473,6 @@ function AppHeader({
       .slice(0, 2)
       .map((chunk) => chunk[0]?.toUpperCase() ?? "")
       .join("") || "A";
-  const crumbs = showWorkpad
-    ? ["Library", activeTitle || "Untitled artifact"]
-    : ["Library"];
   return (
     <header className="flex h-14 flex-none items-center gap-5 border-b border-shell-border bg-shell-1 px-4 sm:px-5">
       <button
@@ -4400,28 +4486,26 @@ function AppHeader({
       </button>
       <WorkpadWordmark />
       <div className="flex min-w-0 items-center gap-3 font-mono text-[12px] text-ink-3">
-        {crumbs.map((crumb, i) => (
-          <span key={i} className="flex items-center gap-3">
+        <span className="text-ink-3">/</span>
+        <span className={showWorkpad ? "truncate text-ink-3" : "truncate font-medium text-ink-1"}>
+          Library
+        </span>
+        {showWorkpad ? (
+          <>
             <span className="text-ink-3">/</span>
-            <span
-              className={
-                i === crumbs.length - 1
-                  ? "truncate font-medium text-ink-1"
-                  : "truncate text-ink-3"
-              }
-              style={{ maxWidth: 360 }}
-            >
-              {crumb}
-            </span>
-          </span>
-        ))}
+            <BreadcrumbTitle
+              title={activeTitle || "Untitled pad"}
+              onRename={onRenameActive}
+            />
+          </>
+        ) : null}
       </div>
       <button
         type="button"
         className="ml-auto hidden items-center gap-2 rounded-md border border-shell-border bg-shell-2 px-3 py-1.5 font-mono text-[11.5px] text-ink-3 transition hover:border-shell-border-strong hover:text-ink-2 md:flex md:min-w-[300px]"
       >
         <GitCommit size={12} />
-        <span>Search artifacts, sources, threads</span>
+        <span>Search pads, sources, threads</span>
         <span className="ml-auto flex items-center gap-1">
           <span className="wp-kbd">⌘</span>
           <span className="wp-kbd">K</span>
@@ -4484,6 +4568,11 @@ function App() {
             <AppHeader
               showWorkpad={showWorkpad}
               activeTitle={activeArtifact?.title ?? null}
+              onRenameActive={(next) => {
+                if (activeArtifact) {
+                  useWorkbenchStore.getState().setActiveArtifactTitle(next);
+                }
+              }}
               onNewSpec={() => setNewSpecOpen(true)}
               sidebarCollapsed={sidebarCollapsed}
               onToggleSidebar={toggleSidebarCollapsed}
