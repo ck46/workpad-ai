@@ -91,3 +91,57 @@ export async function signOut(): Promise<void> {
     credentials: "include",
   });
 }
+
+// Forgotten-password flow. Both endpoints deliberately leak no information
+// about whether the email exists — the request call always resolves and the
+// confirm call is the only one that can surface an error detail.
+export async function requestPasswordReset(email: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/auth/reset-request`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!response.ok && response.status !== 202) {
+    throw new Error(await parseError(response));
+  }
+}
+
+export async function confirmPasswordReset(
+  token: string,
+  newPassword: string,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/auth/reset-confirm`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+}
+
+// Project invites. ``acceptInvite`` requires the caller to already be
+// signed in; main.tsx routes invite URLs through sign-in first when the
+// visitor is anonymous.
+export type ProjectSummary = {
+  id: string;
+  name: string;
+  role: "owner" | "member";
+  created_at: string;
+  updated_at: string;
+};
+
+export async function acceptInvite(token: string): Promise<ProjectSummary> {
+  const response = await fetch(`${API_BASE}/api/invites/accept`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as ProjectSummary;
+}
