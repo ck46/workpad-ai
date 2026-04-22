@@ -17,15 +17,19 @@ picks up all three tables on startup.
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, select
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .auth import User, find_user_by_email, normalize_email
 from .core import Base, utcnow
+
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -266,3 +270,138 @@ def accept_invite(session: Session, *, token: str, user: User) -> tuple[Project,
 
 def valid_role(role: str) -> bool:
     return role in _ROLES
+
+
+# ---------------------------------------------------------------------------
+# Backfill — one-shot migration to scope existing pads/conversations to
+# per-user "Personal" projects. Idempotent; safe to call on every startup.
+# ---------------------------------------------------------------------------
+PERSONAL_PROJECT_NAME = "Personal"
+
+
+def _find_personal_project(session: Session, user_id: str) -> Project | None:
+    """Return the user's existing 'Personal' project if any, else None."""
+
+    return session.scalar(
+        select(Project)
+        .join(ProjectMember, ProjectMember.project_id == Project.id)
+        .where(Project.name == PERSONAL_PROJECT_NAME)
+        .where(ProjectMember.user_id == user_id)
+        .where(ProjectMember.role == ROLE_OWNER)
+        .where(Project.created_by_user_id == user_id)
+    )
+
+
+def ensure_personal_project(session: Session, user_id: str) -> Project:
+    """Find-or-create a 'Personal' project owned by ``user_id``.
+
+    Does NOT commit — caller is expected to wrap in their own
+    transaction (the backfill does one commit at the end).
+    """
+
+    existing = _find_personal_project(session, user_id)
+    if existing is not None:
+        return existing
+
+    project = Project(name=PERSONAL_PROJECT_NAME, created_by_user_id=user_id)
+    session.add(project)
+    session.flush()  # need project.id
+    session.add(ProjectMember(project_id=project.id, user_id=user_id, role=ROLE_OWNER))
+    session.flush()
+    return project
+
+
+def backfill_personal_projects(session: Session) -> dict[str, int]:
+    """Assign every pre-existing conversation+artifact to a Personal project.
+
+    For each distinct ``owner_id`` that has conversations without a
+    ``project_id``, find-or-create a ``Personal`` project owned by that
+    user and set ``Conversation.project_id`` for their rows. Artifacts
+    inherit ``project_id`` from their conversation.
+
+    Orphan owners (owner_id points at a user that no longer exists) and
+    orphan conversations (owner_id NULL) are skipped: the backfill cannot
+    safely attribute them, and leaving them with NULL ``project_id``
+    keeps them inaccessible via the library without data loss.
+
+    Idempotent: a second call is a no-op because the predicate selects
+    only rows whose ``project_id`` is still NULL.
+
+    Returns a summary dict with ``projects_created``, ``conversations``,
+    ``artifacts``.
+    """
+
+    from .core import Artifact, Conversation  # local import to avoid cycles
+
+    orphan_owner_ids = list(
+        session.scalars(
+            select(Conversation.owner_id)
+            .where(Conversation.project_id.is_(None))
+            .where(Conversation.owner_id.isnot(None))
+            .distinct()
+        )
+    )
+
+    projects_created = 0
+    conversations_migrated = 0
+    artifacts_migrated = 0
+    for owner_id in orphan_owner_ids:
+        user = session.get(User, owner_id)
+        if user is None:
+            log.warning(
+                "backfill: skipping orphan owner_id=%s (user no longer exists)", owner_id
+            )
+            continue
+
+        had_personal = _find_personal_project(session, owner_id) is not None
+        project = ensure_personal_project(session, owner_id)
+        if not had_personal:
+            projects_created += 1
+
+        # Capture conversation ids for this owner before the bulk UPDATE
+        # so we can scope the artifact UPDATE to them. This avoids a
+        # correlated subquery and sidesteps the stale ORM identity-map
+        # problem that would otherwise keep ``session.get(Conversation, _)``
+        # returning ``project_id=None`` after the update.
+        conv_ids = list(
+            session.scalars(
+                select(Conversation.id)
+                .where(Conversation.owner_id == owner_id)
+                .where(Conversation.project_id.is_(None))
+            )
+        )
+        if not conv_ids:
+            continue
+
+        session.execute(
+            update(Conversation)
+            .where(Conversation.id.in_(conv_ids))
+            .values(project_id=project.id)
+        )
+        conversations_migrated += len(conv_ids)
+
+        art_result = session.execute(
+            update(Artifact)
+            .where(Artifact.conversation_id.in_(conv_ids))
+            .where(Artifact.project_id.is_(None))
+            .values(project_id=project.id)
+        )
+        artifacts_migrated += art_result.rowcount or 0
+
+    if projects_created or conversations_migrated or artifacts_migrated:
+        session.commit()
+        log.info(
+            "backfill: created %d Personal projects, migrated %d conversations, %d artifacts",
+            projects_created,
+            conversations_migrated,
+            artifacts_migrated,
+        )
+    else:
+        # Nothing changed — avoid a no-op commit.
+        pass
+
+    return {
+        "projects_created": projects_created,
+        "conversations": conversations_migrated,
+        "artifacts": artifacts_migrated,
+    }

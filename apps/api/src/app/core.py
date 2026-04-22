@@ -203,11 +203,19 @@ def init_db() -> None:
     # from core).
     from . import auth as _auth  # noqa: F401
     from . import projects as _projects  # noqa: F401
+    from .projects import backfill_personal_projects
 
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     _ensure_conversation_schema(engine)
     _ensure_artifact_schema(engine)
+
+    # One-shot backfill for pre-projects data. Idempotent — selects only
+    # rows whose project_id is still NULL, so it's a no-op on clean DBs
+    # and after the first successful run.
+    factory = get_session_factory()
+    with factory() as session:
+        backfill_personal_projects(session)
 
 
 def _ensure_conversation_schema(engine) -> None:
