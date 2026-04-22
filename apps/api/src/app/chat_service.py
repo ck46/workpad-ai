@@ -30,22 +30,31 @@ from .models import MODEL_CATALOG, ModelSpec, get_model_spec
 from .schemas import CanvasToolCall, ChatRequest, EditLastUserRequest, RegenerateRequest
 
 
-SYSTEM_PROMPT = """You are Workpad AI, an expert assistant that collaborates through a split-pane workspace.
+SYSTEM_PROMPT = """You are Workpad AI, an expert assistant that collaborates through a split-pane workspace. The user's durable document on the right is called a "pad" — refer to it that way in chat. (Workpad is the product; a pad is one document inside it.)
 
 Rules:
 - Keep chat responses concise, useful, and grounded in the user's request.
-- Use the canvas_apply tool whenever the user asks you to draft, write, revise, structure, or transform durable content.
+- Use the canvas_apply tool whenever the user asks you to draft, write, revise, structure, or transform durable content. (The tool name stays `canvas_apply`; it writes to the pad.)
 - Prefer markdown for prose and structured writing.
 - Prefer python, typescript, javascript, html, json, or text for code and technical outputs.
-- If a user wants to modify an existing artifact, prefer action=patch when the edit is targeted and replace when the artifact should be rewritten.
+- If a user wants to modify an existing pad, prefer action=patch when the edit is targeted and replace when the pad should be rewritten.
 - Tool summaries should be short and concrete.
 - Never emit raw JSON to the user unless they explicitly ask for it.
 
+Diagram rules (important):
+- When a concept would benefit from a picture — an architecture, a data flow, a sequence of events, a state machine, a decision tree, a timeline, a simple relationship graph — render it as a Mermaid diagram in a fenced ```mermaid code block. The pad renders Mermaid natively.
+- Do NOT hand-draw ASCII boxes, pipes, or arrows to approximate diagrams. Skeleton text like `+-----+ --> +-----+` is always a regression from a real Mermaid diagram. Replace it.
+- Pick the right Mermaid diagram type: `flowchart LR` / `flowchart TD` for architecture and data flow, `sequenceDiagram` for request/response and protocol steps, `stateDiagram-v2` for state machines, `erDiagram` for data models, `gantt` for timelines, `classDiagram` for code structure.
+- Keep diagrams small and readable: 4-10 nodes is the sweet spot. If a diagram would need more, split it into two focused diagrams instead of one crowded one.
+- Label nodes and edges clearly. Short nouns for nodes; short verbs or conditions on edges.
+- Accompany every diagram with one or two sentences of prose so the diagram is not load-bearing on its own.
+- Code fences, file paths, SHAs, and inline type names still use regular inline code (`backticks`), not diagrams.
+
 Chat-reply rules (important):
-- EVERY turn must end with an assistant chat message. Never let the workpad edit be your only response.
+- EVERY turn must end with an assistant chat message. Never let the pad edit be your only response.
 - When you call canvas_apply, immediately after the tool completes, send a short chat message (1-3 sentences) describing what you changed so the user can follow along. List the sections you added or edited, what action you took (created / rewrote / patched), and any notable caveats.
-- If you did NOT use the workpad, still reply in chat — do not be silent.
-- Do not dump the artifact content into chat; refer to it in the workpad on the right.
+- If you did NOT touch the pad, still reply in chat — do not be silent.
+- Do not dump the pad content into chat; refer to it in the pad on the right.
 - The chat text is separate from the tool's summary field — write it for the human, not for the log.
 """
 
@@ -70,10 +79,10 @@ def _post_edit_instruction(tool_summaries: list[str]) -> str:
     """
 
     base = (
-        "The workpad was just updated. Now reply in chat with 1–3 sentences "
+        "The pad was just updated. Now reply in chat with 1–3 sentences "
         "describing what you changed so the user can follow along. Mention "
         "the sections you touched and any decisions you made. Do not paste "
-        "the artifact content here."
+        "the pad content here."
     )
     if tool_summaries:
         joined = "; ".join(summary.strip().rstrip(".") for summary in tool_summaries if summary)
@@ -101,7 +110,7 @@ def _fallback_chat_summary(mutations: list[tuple[str, str, str]]) -> str:
     parts: list[str] = []
     for action, title, summary in mutations:
         verb = _ACTION_VERB.get(action, "updated")
-        sentence = f"I {verb} the workpad \u201c{title}\u201d"
+        sentence = f"I {verb} the pad \u201c{title}\u201d"
         tail = (summary or "").strip()
         if tail:
             sentence += f" — {tail.rstrip('.')}"
@@ -117,16 +126,16 @@ def _canvas_parameters_schema() -> dict[str, Any]:
             "action": {
                 "type": "string",
                 "enum": ["create", "replace", "patch"],
-                "description": "How the artifact should change.",
+                "description": "How the pad should change.",
             },
             "title": {
                 "type": "string",
-                "description": "Human-readable title for the artifact.",
+                "description": "Human-readable title for the pad.",
             },
             "content_type": {
                 "type": "string",
                 "enum": ["markdown", "python", "typescript", "javascript", "html", "json", "text"],
-                "description": "The artifact language or format.",
+                "description": "The pad language or format.",
             },
             "summary": {
                 "type": "string",
@@ -134,7 +143,7 @@ def _canvas_parameters_schema() -> dict[str, Any]:
             },
             "content": {
                 "type": ["string", "null"],
-                "description": "Full artifact content for create or replace.",
+                "description": "Full pad content for create or replace.",
             },
             "patches": {
                 "type": ["array", "null"],
@@ -161,7 +170,7 @@ def _openai_tools() -> list[dict[str, Any]]:
         {
             "type": "function",
             "name": "canvas_apply",
-            "description": "Create or update the persistent workpad artifact that appears beside chat.",
+            "description": "Create or update the persistent pad that appears beside chat.",
             "strict": True,
             "parameters": _canvas_parameters_schema(),
         }
@@ -172,7 +181,7 @@ def _anthropic_tools() -> list[dict[str, Any]]:
     return [
         {
             "name": "canvas_apply",
-            "description": "Create or update the persistent workpad artifact that appears beside chat.",
+            "description": "Create or update the persistent pad that appears beside chat.",
             "input_schema": _canvas_parameters_schema(),
         }
     ]
@@ -183,13 +192,13 @@ def _artifact_context(payload: ChatRequest) -> str:
         return ""
     artifact = payload.current_artifact
     return (
-        "\nThe user currently has an artifact open.\n"
+        "\nThe user currently has a pad open.\n"
         f"Title: {artifact.title}\n"
         f"Content type: {artifact.content_type.value}\n"
         f"Version: {artifact.version or 'unknown'}\n"
-        "<artifact>\n"
+        "<pad>\n"
         f"{artifact.content}\n"
-        "</artifact>\n"
+        "</pad>\n"
     )
 
 
