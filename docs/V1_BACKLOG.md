@@ -75,15 +75,15 @@ The marketing + signin/signup/forgot UI already existed in `apps/web/src/compone
 
 ### 1F — Project switcher + project home
 
-- [ ] Sidebar project switcher component — lists caller's projects, current selected, "New project" menu item opens a modal.
-- [ ] "New project" modal — name field + create. On create, switch to the new project (empty state).
-- [ ] Current-project id persisted to `localStorage` (key: `workpad-current-project`); reconciled against the projects list on load (fallback to first project, or onboarding if none).
-- [ ] Library list scoped by current project.
-- [ ] New-pad and new-thread flows include `project_id` in their create requests.
-- [ ] Empty-state for a brand-new project: "Drop a transcript / PDF / repo URL to scaffold your first pad" dropzone stub (functional scaffolding lands in Phase 2 — this just sets expectations).
-- [ ] Invite UX in project settings panel — list members + pending invites, owner can issue new invites and copy the signed URL.
+- [x] `lib/projects.ts` — thin fetch client for the Phase 1C endpoints (listProjects, createProject, getProjectDetail, createInvite) + shared types. *Commit `22f1170`.*
+- [x] Current-project state in `useWorkbenchStore`: `projects`, `currentProjectId`, `setCurrentProject`, `upsertProject`. `currentProjectId` persisted to `localStorage` under `workpad-current-project` and reconciled against the live list on bootstrap. Brand-new users with no projects get an auto-created `Personal` client-side so the store always has something scoped. *Commit `f5149f1`.*
+- [x] Every `/api/conversations` + `/api/library/artifacts` call now carries `project_id`. `startNewConversation`, `setShowArchived`, `draftSpec` (+ `NewSpecModal`), and `LibraryHome.tsx` all pull the current project from the store. *Commit `f5149f1`.*
+- [x] Sidebar `ProjectSwitcher` component — dropdown listing the caller's projects + role badges, "New project" and "Project settings" entries, outside-click-to-close, active row highlighted with signal-soft. *Commit `f60a4e6`.*
+- [x] `NewProjectModal` — name input + Create; on success upserts into the store, switches, and closes. Esc / outside-click to dismiss. *Commit `7ee3105`.*
+- [x] `ProjectSettingsModal` — fetches `GET /api/projects/{id}`, renders members list (with owner/member badges) + pending invites + an owner-only invite form. New invites auto-copy the `accept_url` to the clipboard with a confirmation note that v1 has no mailer. *Commit `7ee3105`.*
+- [x] `EmptyProjectHero` in `LibraryHome.tsx` — when `totalArtifacts === 0`, renders a dashed-border "Start your first pad" panel with a visibly-disabled scaffold drop zone ("Coming in Phase 2") and two working CTAs (Draft with AI → `NewSpecModal`; Start a blank pad → `startNewConversation`). Sets expectations against the "first session produces value" design principle. *Commit `b3016d9`.*
 
-**Exit (Phase 1 end-to-end):** User A signs up → creates project "Acme" → invites user B by email → user B signs up and accepts the invite → both see the same empty project and can create a pad that the other sees. Existing pads load under a user's "Personal" project with no data loss.
+**Exit (Phase 1 end-to-end):** User A signs up → auto-Personal project → switches to create project "Acme" from the sidebar switcher → opens Project settings → invites `b@example.com` → copy the `accept_url` → user B opens it → signs up → lands on `#/invite?token=...` (token preserved via sessionStorage) → clicks Accept → switches into "Acme" → sees the same pads user A created → creates a pad which user A then sees. Existing SQLite DBs migrate under each owner's "Personal" project with no data loss.
 
 ---
 
