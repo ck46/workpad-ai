@@ -145,3 +145,30 @@ export async function acceptInvite(token: string): Promise<ProjectSummary> {
   }
   return (await response.json()) as ProjectSummary;
 }
+
+// Pending-invite handoff: when an anonymous visitor lands on
+// #/invite?token=... we can't accept the invite yet (the backend needs a
+// signed-in caller). We stash the token in sessionStorage and bounce them
+// to signin/signup; after auth succeeds, the auth page routes back to
+// #/invite?token=<the-stashed-token> instead of the default app home.
+const PENDING_INVITE_KEY = "workpad-pending-invite";
+
+export function stashPendingInvite(token: string): void {
+  try {
+    sessionStorage.setItem(PENDING_INVITE_KEY, token);
+  } catch {
+    // sessionStorage may be unavailable (private mode, etc.); the fallback
+    // is just that the invite flow doesn't round-trip — the user ends up
+    // at /#/app and can open the original invite URL manually.
+  }
+}
+
+export function takePendingInvite(): string | null {
+  try {
+    const token = sessionStorage.getItem(PENDING_INVITE_KEY);
+    if (token) sessionStorage.removeItem(PENDING_INVITE_KEY);
+    return token;
+  } catch {
+    return null;
+  }
+}

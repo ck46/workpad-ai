@@ -11,6 +11,8 @@ import {
   requestPasswordReset,
   signIn,
   signUp,
+  stashPendingInvite,
+  takePendingInvite,
   type AuthUser,
   type ProjectSummary,
 } from "../lib/auth";
@@ -825,6 +827,10 @@ function InviteAcceptView({
   }
 
   if (!user) {
+    const routeWithStash = (dest: "signin" | "signup") => {
+      stashPendingInvite(token);
+      nav(dest);
+    };
     return (
       <div className="flex flex-col gap-3.5">
         <div className="wp-overline mb-3">You've been invited</div>
@@ -836,12 +842,12 @@ function InviteAcceptView({
         </h1>
         <p className="mb-4 text-ink-2">
           Workpad invites are tied to a signed-in account. After you sign in (or
-          sign up) you'll be dropped straight into the project.
+          sign up) you'll be dropped straight back here to finish joining.
         </p>
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => nav("signup")}
+            onClick={() => routeWithStash("signup")}
             className="inline-flex items-center gap-2 rounded-md bg-ink-1 px-4 py-2.5 text-[14px] font-medium text-white transition hover:bg-black"
           >
             Create an account
@@ -849,15 +855,12 @@ function InviteAcceptView({
           </button>
           <button
             type="button"
-            onClick={() => nav("signin")}
+            onClick={() => routeWithStash("signin")}
             className="inline-flex items-center gap-2 rounded-md border border-shell-border-strong bg-shell-1 px-4 py-2.5 text-[14px] font-medium text-ink-1 transition hover:bg-shell-2"
           >
             I have an account
           </button>
         </div>
-        <p className="mt-4 font-mono text-[11px] text-ink-3">
-          The invite token stays in the URL while you sign in.
-        </p>
       </div>
     );
   }
@@ -1125,6 +1128,20 @@ function ErrorBanner({ message }: { message: string | null }) {
   );
 }
 
+// After a successful signin/signup, check if there's a pending invite
+// stashed from a prior anonymous visit to #/invite. If so, bounce the
+// user back to the invite-accept page so they can complete the join.
+// Otherwise fall through to the app. Hash navigation is used directly
+// here because our ``nav`` abstraction doesn't carry tokens.
+function routeAfterAuth(nav: Nav): void {
+  const pendingInvite = takePendingInvite();
+  if (pendingInvite) {
+    window.location.hash = `#/invite?token=${encodeURIComponent(pendingInvite)}`;
+    return;
+  }
+  nav("app");
+}
+
 function SignInView({
   nav,
   onAuthenticated,
@@ -1145,7 +1162,7 @@ function SignInView({
     try {
       const user = await signIn(email.trim(), password);
       onAuthenticated(user);
-      nav("app");
+      routeAfterAuth(nav);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in.");
     } finally {
@@ -1247,7 +1264,7 @@ function SignUpView({
     try {
       const user = await signUp(email.trim(), password, name.trim());
       onAuthenticated(user);
-      nav("app");
+      routeAfterAuth(nav);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create workspace.");
     } finally {
