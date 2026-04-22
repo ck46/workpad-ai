@@ -4,7 +4,7 @@
 
 This document captures possible customer and user expansions that are worth revisiting later. It is intentionally not a committed roadmap or source-of-truth product spec. Treat it as a strategy note: useful for future planning, messaging, and prioritization conversations.
 
-For the current direction, see `docs/PRODUCT_VISION.md`, `docs/V1_SPEC.md`, and `docs/PERSONAL_MVP_SPEC.md`.
+For the current direction, see `docs/PRODUCT_VISION.md` and `docs/V1_SPEC.md`. The earlier personal-MVP and web-multiuser branches are archived under `docs/archive/`.
 
 ## Current Strongest Wedge
 
@@ -29,7 +29,7 @@ Why they fit:
 - Their documentation drifts quickly as systems change
 - The value of "live sources + verification" is immediately legible
 
-Likely artifact types:
+Likely pad types:
 
 - Runbooks
 - Incident postmortems
@@ -44,7 +44,7 @@ Why they fit:
 - Their systems are harder to reason about from code alone
 - They benefit from preserving why a prompt, model, or evaluation strategy was chosen
 
-Likely artifact types:
+Likely pad types:
 
 - Prompt specs
 - Evaluation plans
@@ -62,7 +62,7 @@ Why they fit:
 What would need to be true first:
 
 - Strong Figma support
-- Better cross-linking between design assets and code artifacts
+- Better cross-linking between design assets and code pads
 - A clearer design-review workflow
 
 ### 4. PMs and EMs in Technical Workflows
