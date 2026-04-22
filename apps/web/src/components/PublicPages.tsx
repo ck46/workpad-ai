@@ -5,7 +5,12 @@
 
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, Github, LoaderCircle } from "lucide-react";
-import { signIn, signUp, type AuthUser } from "../lib/auth";
+import {
+  requestPasswordReset,
+  signIn,
+  signUp,
+  type AuthUser,
+} from "../lib/auth";
 
 type Route = "marketing" | "signin" | "signup" | "forgot";
 
@@ -948,6 +953,8 @@ function SignUpView({
 function ForgotView({ nav }: { nav: Nav }) {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (sent) {
     return (
@@ -962,7 +969,9 @@ function ForgotView({ nav }: { nav: Nav }) {
         <p className="mb-4 text-ink-2">
           If{" "}
           <span className="font-mono text-ink-1">{email || "that email"}</span>{" "}
-          is registered, you'll have a reset link in a minute. It expires in 30 minutes.
+          is registered, you'll have a reset link in a minute. It expires in 24 hours.
+          In local development the link is written to the API server log instead
+          of being emailed.
         </p>
         <button
           type="button"
@@ -978,11 +987,21 @@ function ForgotView({ nav }: { nav: Nav }) {
 
   return (
     <form
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        // Password reset is not yet implemented server-side. The confirmation
-        // screen is deliberately ambiguous about whether the email exists.
-        setSent(true);
+        if (!email.trim() || submitting) return;
+        setError(null);
+        setSubmitting(true);
+        try {
+          await requestPasswordReset(email.trim());
+          // The endpoint always returns 202 — confirmation screen is
+          // deliberately neutral about whether the email exists.
+          setSent(true);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Could not send the reset link.");
+        } finally {
+          setSubmitting(false);
+        }
       }}
       className="flex flex-col gap-3.5"
     >
@@ -1006,13 +1025,19 @@ function ForgotView({ nav }: { nav: Nav }) {
           required
         />
       </Field>
+      {error ? (
+        <div className="text-[12px] text-state-missing-ink" role="alert">
+          {error}
+        </div>
+      ) : null}
       <button
         type="submit"
-        disabled={!email}
+        disabled={!email || submitting}
         className="mt-1 inline-flex w-full items-center justify-center gap-2 rounded-md bg-ink-1 px-4 py-3 text-[14px] font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
       >
+        {submitting ? <LoaderCircle size={14} className="animate-spin" /> : null}
         Send reset link
-        <ArrowRight size={14} />
+        {!submitting ? <ArrowRight size={14} /> : null}
       </button>
       <button
         type="button"
