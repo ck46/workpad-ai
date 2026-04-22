@@ -66,6 +66,7 @@ import {
   Copy,
   FileCode2,
   FileDown,
+  FolderOpen,
   LoaderCircle,
   Archive,
   ArchiveRestore,
@@ -3784,7 +3785,121 @@ function ConversationCard({ conversation, active }: { conversation: Conversation
   );
 }
 
-function Sidebar({ collapsed }: { collapsed: boolean }) {
+function ProjectSwitcher({
+  onCreate,
+  onManage,
+}: {
+  onCreate: () => void;
+  onManage: () => void;
+}) {
+  const projects = useWorkbenchStore((state) => state.projects);
+  const currentProjectId = useWorkbenchStore((state) => state.currentProjectId);
+  const setCurrentProject = useWorkbenchStore((state) => state.setCurrentProject);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const active = projects.find((p) => p.id === currentProjectId) ?? projects[0] ?? null;
+
+  return (
+    <div ref={containerRef} className="relative mb-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 rounded-md border border-shell-border bg-shell-2 px-2.5 py-2 text-left transition hover:border-shell-border-strong"
+      >
+        <FolderOpen size={13} className="flex-none text-ink-3" />
+        <div className="min-w-0 flex-1">
+          <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-3">
+            Project
+          </div>
+          <div className="truncate text-[12.5px] font-medium text-ink-1">
+            {active?.name ?? "No project"}
+          </div>
+        </div>
+        <ChevronDown
+          size={13}
+          className={`flex-none text-ink-3 transition ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-30 mt-1.5 rounded-lg border border-shell-border bg-shell-1 p-1 shadow-panel">
+          <div className="px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+            Switch project
+          </div>
+          <div className="max-h-60 overflow-auto">
+            {projects.map((p) => {
+              const isActive = p.id === currentProjectId;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={async () => {
+                    setOpen(false);
+                    if (!isActive) await setCurrentProject(p.id);
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition hover:bg-shell-2 ${
+                    isActive ? "bg-signal-soft text-signal-soft-ink" : "text-ink-1"
+                  }`}
+                >
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">
+                    {p.name}
+                  </span>
+                  <span className="font-mono text-[10px] text-ink-3">
+                    {p.role === "owner" ? "owner" : "member"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="my-1 h-px bg-shell-border" />
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onCreate();
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12.5px] text-ink-1 transition hover:bg-shell-2"
+          >
+            <Plus size={12} />
+            New project
+          </button>
+          {active ? (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onManage();
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12.5px] text-ink-1 transition hover:bg-shell-2"
+            >
+              <Settings size={12} />
+              Project settings
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Sidebar({
+  collapsed,
+  onOpenNewProject,
+  onOpenProjectSettings,
+}: {
+  collapsed: boolean;
+  onOpenNewProject: () => void;
+  onOpenProjectSettings: () => void;
+}) {
   const conversations = useWorkbenchStore((state) => state.conversations);
   const activeConversationId = useWorkbenchStore((state) => state.activeConversationId);
   const startNewConversation = useWorkbenchStore((state) => state.startNewConversation);
@@ -3843,6 +3958,10 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 
   return (
     <aside className="hidden h-full w-[260px] flex-none flex-col border-r border-shell-border bg-shell-1 px-3 py-3 lg:flex">
+      <ProjectSwitcher
+        onCreate={onOpenNewProject}
+        onManage={onOpenProjectSettings}
+      />
       <button
         type="button"
         onClick={() => void startNewConversation()}
@@ -4635,6 +4754,8 @@ function App() {
   const currentProjectId = useWorkbenchStore((state) => state.currentProjectId);
   const [canvasOnLeft] = useCanvasOnLeft();
   const [newSpecOpen, setNewSpecOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [sidebarCollapsed, toggleSidebarCollapsed] = useSidebarCollapsed();
   useAutosave();
   useAutoVerifyCitations();
@@ -4648,7 +4769,11 @@ function App() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-shell-0">
-      <Sidebar collapsed={sidebarCollapsed} />
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onOpenNewProject={() => setNewProjectOpen(true)}
+        onOpenProjectSettings={() => setProjectSettingsOpen(true)}
+      />
       <main className="flex-1 overflow-auto">
         {!bootstrapped && status === "loading" ? (
           <div className="flex min-h-[80vh] items-center justify-center">
