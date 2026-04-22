@@ -126,6 +126,7 @@ module.exports = {
           press: "var(--accent-signal-press)",
           soft: "var(--accent-signal-soft)",
           "soft-border": "var(--accent-signal-soft-border)",
+          "soft-ink": "var(--accent-signal-soft-ink)",
           ink: "var(--accent-signal-ink)",
         },
         state: {

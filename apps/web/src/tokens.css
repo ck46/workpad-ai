@@ -3,7 +3,7 @@
  * ============================
  *
  * Two-surface system: a cool neutral SHELL (app chrome) frames a warm PAPER
- * surface (artifact body). One signal accent (ember). Mono is used heavily
+ * surface (pad body). One signal accent (ember). Mono is used heavily
  * for source-anchored signals (citations, SHAs, stamps).
  *
  * Import into any HTML with:
@@ -33,9 +33,9 @@
   --ink-4: #B5B6BC;                /* disabled / placeholders */
 
   /* ---------------------------------------------------------------
-   * COLORS — Paper (warm, artifact body — always light)
+   * COLORS — Paper (warm, pad body — always light)
    * --------------------------------------------------------------- */
-  --paper-0: #FBF8F1;              /* artifact surface */
+  --paper-0: #FBF8F1;              /* pad surface */
   --paper-1: #F4EFE3;              /* inset: callouts, citation context */
   --paper-2: #EAE3CE;              /* hover on paper, highlight */
   --paper-border: #E8E1CF;
@@ -53,6 +53,7 @@
   --accent-signal-ink: #FFFFFF;    /* text on accent */
   --accent-signal-soft: #FBEBE0;   /* 10% tint for banners, selected rows */
   --accent-signal-soft-border: #F4D3BE;
+  --accent-signal-soft-ink: #AE430F; /* legible text on signal-soft; flips in dark mode */
 
   /* ---------------------------------------------------------------
    * COLORS — Semantic (citation resolution states)
@@ -86,7 +87,7 @@
   --fs-caption: 12px;
   --fs-small: 13px;
   --fs-body: 15px;
-  --fs-read: 17px;                 /* artifact body — comfortable long-form */
+  --fs-read: 17px;                 /* pad body — comfortable long-form */
   --fs-h3: 20px;
   --fs-h2: 26px;
   --fs-h1: 34px;
@@ -98,7 +99,7 @@
   --lh-snug: 1.25;
   --lh-ui: 1.4;
   --lh-body: 1.55;
-  --lh-read: 1.65;                 /* artifact long-form */
+  --lh-read: 1.65;                 /* pad long-form */
 
   /* Tracking — only places tracking deviates from 0 */
   --tr-overline: 0.14em;           /* OVERLINE LABELS */
@@ -163,13 +164,13 @@
   --header-h: 56px;
   --sidebar-w: 260px;
   --sidebar-w-collapsed: 56px;
-  --mw-read: 72ch;                 /* artifact max readable width */
+  --mw-read: 72ch;                 /* pad max readable width */
   --mw-shell: 1440px;              /* app shell max */
   --mw-marketing: 1200px;
 }
 
 /* -----------------------------------------------------------------
- * DARK MODE — shell flips; paper stays warm (artifact reading is
+ * DARK MODE — shell flips; paper stays warm (pad reading is
  * always on paper). This is intentional: paper is *the document*,
  * the shell is *the app*.
  * ----------------------------------------------------------------- */
@@ -187,7 +188,14 @@
     --ink-3: #70727B;
     --ink-4: #45474F;
 
-    /* Paper stays warm — artifact reading is always on paper.
+    /* Ember soft-fill flips to a warm-dark tint so chat bubbles and
+       active row highlights stop looking like cream rectangles floating
+       on the dark shell. The bright ember (#D85A1E) is still the CTA. */
+    --accent-signal-soft: #2C1B10;
+    --accent-signal-soft-border: #4A2E1C;
+    --accent-signal-soft-ink: #F2C6A5;
+
+    /* Paper stays warm — pad reading is always on paper.
        The only thing that changes is a slight contrast bump. */
     --paper-0: #F7F3E9;
     --paper-1: #EFE9D9;
@@ -210,6 +218,10 @@
   --ink-2: #A7A9B2;
   --ink-3: #70727B;
   --ink-4: #45474F;
+
+  --accent-signal-soft: #2C1B10;
+  --accent-signal-soft-border: #4A2E1C;
+  --accent-signal-soft-ink: #F2C6A5;
 
   --paper-0: #F7F3E9;
   --paper-1: #EFE9D9;
@@ -292,7 +304,7 @@ code {
   color: var(--ink-3);
 }
 
-/* Stamp — artifact identity atom. Mono, tight letterspacing. */
+/* Stamp — pad identity atom. Mono, tight letterspacing. */
 .stamp {
   font-family: var(--ff-mono);
   font-size: var(--fs-micro);
@@ -302,7 +314,7 @@ code {
   text-transform: uppercase;
 }
 
-/* Serif display — used on marketing hero and artifact h1 inside paper */
+/* Serif display — used on marketing hero and pad h1 inside paper */
 .display {
   font-family: var(--ff-serif);
   font-size: var(--fs-display);
@@ -319,9 +331,9 @@ code {
 }
 
 /* -----------------------------------------------------------------
- * PAPER SURFACE — applied to artifact bodies. Sets serif defaults,
+ * PAPER SURFACE — applied to pad bodies. Sets serif defaults,
  * warmer ink, reading line-height. Just wrap an element with
- * class="paper" to get a proper artifact reading surface.
+ * class="paper" to get a proper pad reading surface.
  * ----------------------------------------------------------------- */
 .paper {
   background: var(--paper-0);

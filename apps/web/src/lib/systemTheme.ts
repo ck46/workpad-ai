@@ -2,7 +2,7 @@
 // toolbar). This is orthogonal to the canvas theme — the canvas toggle
 // controls whether the paper editor renders warm-ivory vs. warmer-still,
 // while this controls the whole chrome around it. The paper stays warm in
-// either mode (design decision: artifacts are always a document, never a
+// either mode (design decision: pads are always a document, never a
 // chat-log surface).
 //
 // tokens.css defines a `:root.theme-dark` class with dark-shell values;
