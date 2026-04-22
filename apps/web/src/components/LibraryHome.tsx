@@ -6,11 +6,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
+  FileUp,
   History,
   LayoutGrid,
   List,
   Plus,
   Sparkles,
+  Upload,
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 
@@ -201,6 +203,10 @@ export function LibraryHome({
         <div className="mb-8 rounded-md border border-state-missing-soft bg-state-missing-soft px-3 py-2 text-[12.5px] text-state-missing-ink">
           {error}
         </div>
+      ) : null}
+
+      {totalArtifacts === 0 && !error ? (
+        <EmptyProjectHero onDraftAI={onDraftAI} onNew={onNew} />
       ) : null}
 
       {recent.length > 0 ? (
@@ -445,6 +451,75 @@ function TypeChip({ type }: { type: string }) {
     >
       {type}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EmptyProjectHero — rendered when the current project has zero pads.
+// Foreshadows the Phase 2 scaffold dropzone (paste transcript / upload file /
+// paste repo URL) but keeps that surface visually disabled for now since the
+// backend scaffold endpoint isn't wired yet. The two CTA buttons below drop
+// the user into flows that DO work today: new manual pad + Draft with AI.
+// ---------------------------------------------------------------------------
+function EmptyProjectHero({
+  onDraftAI,
+  onNew,
+}: {
+  onDraftAI: () => void;
+  onNew: () => void;
+}) {
+  return (
+    <section className="mb-11 rounded-2xl border border-dashed border-shell-border-strong bg-shell-1 px-6 py-10 text-center sm:px-10">
+      <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-lg bg-shell-2">
+        <FileUp size={24} className="text-ink-3" />
+      </div>
+      <h2
+        className="m-0 font-serif text-[28px] font-medium text-ink-1"
+        style={{ letterSpacing: "-0.02em", lineHeight: 1.15 }}
+      >
+        Start your first pad.
+      </h2>
+      <p className="mx-auto mt-2 max-w-[60ch] text-[14px] text-ink-2">
+        Drop a meeting transcript, a PDF, or a repo URL — Workpad will scaffold
+        a named project around it and draft a starting pad. Or start writing
+        manually and wire sources in as you go.
+      </p>
+
+      <div
+        className="mx-auto mt-7 flex max-w-[560px] items-center gap-3 rounded-xl border-2 border-dashed border-shell-border bg-shell-0 px-5 py-6 text-left opacity-60"
+        aria-disabled
+        title="Scaffold drop zone lands in Phase 2"
+      >
+        <Upload size={18} className="flex-none text-ink-3" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-medium text-ink-1">
+            Drop a transcript, file, or repo URL
+          </div>
+          <div className="mt-0.5 font-mono text-[11px] text-ink-3">
+            Coming in Phase 2 — scaffold from any input
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-7 flex flex-wrap justify-center gap-2">
+        <button
+          type="button"
+          onClick={onDraftAI}
+          className="inline-flex items-center gap-2 rounded-md bg-signal px-4 py-2 text-[13px] font-medium text-white transition hover:bg-signal-hover"
+        >
+          <Sparkles size={14} />
+          Draft with AI
+        </button>
+        <button
+          type="button"
+          onClick={onNew}
+          className="inline-flex items-center gap-2 rounded-md border border-shell-border-strong bg-shell-1 px-4 py-2 text-[13px] font-medium text-ink-1 transition hover:bg-shell-2"
+        >
+          <Plus size={14} />
+          Start a blank pad
+        </button>
+      </div>
+    </section>
   );
 }
 
