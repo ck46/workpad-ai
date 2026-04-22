@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
-import { useAuth } from "./lib/auth";
+import { useAuth, type ProjectSummary } from "./lib/auth";
+import { createProject, listProjects } from "./lib/projects";
 import { useSystemTheme, type SystemTheme } from "./lib/systemTheme";
 import { LibraryHome, type ArtifactListItem } from "./components/LibraryHome";
 import { ArtifactDiffView } from "./components/ArtifactDiffView";
@@ -233,6 +234,7 @@ type Artifact = {
 
 type DraftSpecPayload = {
   conversation_id?: string | null;
+  project_id: string;
   transcript: string;
   repo: string;
   github_token?: string;
@@ -329,6 +331,10 @@ type WorkbenchStore = {
   models: ModelInfo[];
   selectedModelId: string;
   showArchived: boolean;
+  projects: ProjectSummary[];
+  currentProjectId: string | null;
+  setCurrentProject: (projectId: string) => Promise<void>;
+  upsertProject: (project: ProjectSummary) => void;
   bootstrap: () => Promise<void>;
   startNewConversation: () => Promise<void>;
   selectConversation: (conversationId: string) => Promise<void>;
@@ -358,6 +364,30 @@ type WorkbenchStore = {
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
 const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
 let artifactSaveRequestCounter = 0;
+
+const CURRENT_PROJECT_STORAGE_KEY = "workpad-current-project";
+
+function loadStoredProjectId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(CURRENT_PROJECT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeProjectId(projectId: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (projectId) {
+      window.localStorage.setItem(CURRENT_PROJECT_STORAGE_KEY, projectId);
+    } else {
+      window.localStorage.removeItem(CURRENT_PROJECT_STORAGE_KEY);
+    }
+  } catch {
+    // storage may be unavailable
+  }
+}
 
 marked.setOptions({
   breaks: true,
@@ -640,13 +670,54 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   models: FALLBACK_MODELS,
   selectedModelId: loadStoredModelId(),
   showArchived: false,
+  projects: [],
+  currentProjectId: loadStoredProjectId(),
+
+  upsertProject(project: ProjectSummary) {
+    const existing = get().projects;
+    const filtered = existing.filter((p) => p.id !== project.id);
+    set({ projects: [project, ...filtered] });
+  },
+
+  async setCurrentProject(projectId: string) {
+    if (projectId === get().currentProjectId) return;
+    set({
+      currentProjectId: projectId,
+      // Clear the open conversation; it may belong to a different project.
+      activeConversationId: null,
+      messages: [],
+      artifacts: [],
+      activeArtifact: null,
+      conversations: [],
+    });
+    storeProjectId(projectId);
+    // Refresh scoped lists.
+    await get().bootstrap();
+  },
 
   async bootstrap() {
     set({ status: "loading", error: null });
     try {
+      // Resolve the current project first: load the caller's projects,
+      // auto-create a "Personal" one if they have none, and reconcile the
+      // stored currentProjectId against what's still visible.
+      let projects = await listProjects();
+      let currentProjectId = get().currentProjectId;
+      if (projects.length === 0) {
+        const created = await createProject("Personal");
+        projects = [created];
+      }
+      const storedStillValid = projects.some((p) => p.id === currentProjectId);
+      if (!storedStillValid) {
+        currentProjectId = projects[0].id;
+      }
+      storeProjectId(currentProjectId);
+
       const includeArchived = get().showArchived;
       const [conversations, models] = await Promise.all([
-        requestJson<ConversationSummary[]>(`/api/conversations?include_archived=${includeArchived}`),
+        requestJson<ConversationSummary[]>(
+          `/api/conversations?project_id=${encodeURIComponent(currentProjectId!)}&include_archived=${includeArchived}`,
+        ),
         requestJson<ModelInfo[]>("/api/models").catch(() => FALLBACK_MODELS),
       ]);
       const resolvedModels = models.length > 0 ? models : FALLBACK_MODELS;
@@ -654,6 +725,8 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       const preferred = resolvedModels.find((item) => item.id === current && item.available);
       const fallback = preferred ?? resolvedModels.find((item) => item.available) ?? resolvedModels[0];
       set({
+        projects,
+        currentProjectId,
         conversations,
         models: resolvedModels,
         selectedModelId: fallback.id,
@@ -676,7 +749,19 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   },
 
   async startNewConversation() {
-    const conversation = await requestJson<ConversationSummary>("/api/conversations", { method: "POST" });
+    const projectId = get().currentProjectId;
+    if (!projectId) {
+      set({ error: "No project selected. Pick or create a project first." });
+      return;
+    }
+    const conversation = await requestJson<ConversationSummary>(
+      "/api/conversations",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId }),
+      },
+    );
     set({
       conversations: upsertConversation(get().conversations, conversation),
       activeConversationId: conversation.id,
@@ -716,9 +801,11 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
 
   async setShowArchived(value) {
     set({ showArchived: value });
+    const projectId = get().currentProjectId;
+    if (!projectId) return;
     try {
       const conversations = await requestJson<ConversationSummary[]>(
-        `/api/conversations?include_archived=${value}`,
+        `/api/conversations?project_id=${encodeURIComponent(projectId)}&include_archived=${value}`,
       );
       set({ conversations });
     } catch (error) {
@@ -4100,6 +4187,7 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
   const draftSpec = useWorkbenchStore((state) => state.draftSpec);
   const resetDraft = useWorkbenchStore((state) => state.resetDraft);
   const activeConversationId = useWorkbenchStore((state) => state.activeConversationId);
+  const currentProjectId = useWorkbenchStore((state) => state.currentProjectId);
 
   const [transcript, setTranscript] = useState("");
   const [repoInput, setRepoInput] = useState("");
@@ -4168,8 +4256,13 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
       setLocalError("Paste at least one line of transcript.");
       return;
     }
+    if (!currentProjectId) {
+      setLocalError("No project selected. Pick or create a project first.");
+      return;
+    }
     await draftSpec({
       conversation_id: attachToConversation ? activeConversationId : null,
+      project_id: currentProjectId,
       transcript,
       repo: repoNormalized,
       github_token: githubToken.trim() || undefined,
@@ -4539,6 +4632,7 @@ function App() {
   const activeConversationId = useWorkbenchStore((state) => state.activeConversationId);
   const selectConversation = useWorkbenchStore((state) => state.selectConversation);
   const startNewConversation = useWorkbenchStore((state) => state.startNewConversation);
+  const currentProjectId = useWorkbenchStore((state) => state.currentProjectId);
   const [canvasOnLeft] = useCanvasOnLeft();
   const [newSpecOpen, setNewSpecOpen] = useState(false);
   const [sidebarCollapsed, toggleSidebarCollapsed] = useSidebarCollapsed();
@@ -4583,6 +4677,7 @@ function App() {
                 {messages.length === 0 && !activeConversationId ? (
                   <div className="flex-1 overflow-auto">
                     <LibraryHome
+                      projectId={currentProjectId}
                       onOpen={(a: ArtifactListItem) => {
                         void selectConversation(a.conversation_id);
                       }}

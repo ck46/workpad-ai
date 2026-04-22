@@ -82,11 +82,13 @@ function shortType(a: ArtifactListItem): string {
 }
 
 export function LibraryHome({
+  projectId,
   onOpen,
   onNew,
   onDraftAI,
   onContinueLast,
 }: {
+  projectId: string | null;
   onOpen: (artifact: ArtifactListItem) => void;
   onNew: () => void;
   onDraftAI: () => void;
@@ -99,12 +101,17 @@ export function LibraryHome({
   const [view, setView] = useState<"list" | "grid">("list");
 
   useEffect(() => {
+    if (!projectId) {
+      setItems([]);
+      return;
+    }
     let alive = true;
     (async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/library/artifacts?limit=200`, {
-          credentials: "include",
-        });
+        const response = await fetch(
+          `${API_BASE}/api/library/artifacts?project_id=${encodeURIComponent(projectId)}&limit=200`,
+          { credentials: "include" },
+        );
         if (!response.ok) {
           throw new Error(`Library fetch failed (${response.status})`);
         }
@@ -117,7 +124,7 @@ export function LibraryHome({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [projectId]);
 
   const firstName = user?.name?.trim().split(/\s+/)[0] || user?.email?.split("@")[0] || "there";
 
