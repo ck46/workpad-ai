@@ -2681,7 +2681,7 @@ function MessageRow({
         {isUser ? "You" : "Workpad AI"} · {messageTimestamp(message.created_at)}
       </span>
       {isUser ? (
-        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-signal-soft font-mono text-[8px] font-semibold text-signal-press">
+        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-signal-soft font-mono text-[8px] font-semibold text-signal-soft-ink">
           {initials}
         </span>
       ) : null}
@@ -2714,7 +2714,7 @@ function MessageRow({
                   }
                 }}
                 rows={1}
-                className="max-h-48 w-full resize-none border-0 bg-transparent text-[13px] leading-6 text-signal-press outline-none placeholder:text-signal-press/60"
+                className="max-h-48 w-full resize-none border-0 bg-transparent text-[13px] leading-6 text-signal-soft-ink outline-none placeholder:text-ink-3"
               />
               <div className="mt-1.5 flex items-center justify-end gap-2">
                 <button
@@ -2735,7 +2735,7 @@ function MessageRow({
               </div>
             </div>
           ) : (
-            <div className="max-w-[92%] whitespace-pre-wrap rounded-[10px] bg-signal-soft px-3 py-2 text-[13px] leading-[1.55] text-signal-press">
+            <div className="max-w-[92%] whitespace-pre-wrap rounded-[10px] bg-signal-soft px-3 py-2 text-[13px] leading-[1.55] text-signal-soft-ink">
               {message.content}
             </div>
           )
@@ -3620,7 +3620,7 @@ function ConversationCard({ conversation, active }: { conversation: Conversation
         onClick={() => void selectConversation(conversation.id)}
         className="block w-full rounded-md px-2.5 py-2 pr-8 text-left"
       >
-        <div className={`truncate text-[12.5px] ${active ? "font-medium text-signal-press" : "font-normal text-ink-1"}`}>
+        <div className={`truncate text-[12.5px] ${active ? "font-medium text-signal-soft-ink" : "font-normal text-ink-1"}`}>
           {conversation.title}
           {isArchived ? (
             <span className="ml-2 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-3">
@@ -3932,7 +3932,7 @@ function SidebarNavItem({
   const base =
     "relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] transition";
   const tone = active
-    ? "bg-signal-soft text-signal-press font-medium"
+    ? "bg-signal-soft text-signal-soft-ink font-medium"
     : disabled
       ? "text-ink-3 cursor-default"
       : "text-ink-2 hover:bg-shell-2 hover:text-ink-1";
@@ -3946,7 +3946,7 @@ function SidebarNavItem({
       {count !== undefined && count !== null ? (
         <span
           className={`font-mono text-[10px] ${
-            active ? "text-signal-press" : "text-ink-3"
+            active ? "text-signal-soft-ink" : "text-ink-3"
           }`}
         >
           {count}
