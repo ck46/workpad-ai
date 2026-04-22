@@ -63,6 +63,7 @@ from .schemas import (
     ArtifactStatus,
     ArtifactType,
     ChatRequest,
+    ConversationCreateRequest,
     ConversationDetail,
     ConversationSummary,
     EditLastUserRequest,
@@ -229,6 +230,54 @@ def auth_reset_confirm(payload: PasswordResetConfirm):
 
 
 # ---------------------------------------------------------------------------
+# Project-scoped resource guards
+# ---------------------------------------------------------------------------
+def _require_project_member_or_403(session, project_id: str, user: User) -> None:
+    """Raise 403 if ``user`` isn't a member of ``project_id``."""
+
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+    try:
+        from .projects import require_member as _require_member
+
+        _require_member(session, project_id, user.id)
+    except NotAMember as exc:
+        raise HTTPException(status_code=403, detail="not a member of this project") from exc
+
+
+def _require_artifact_access(session, artifact_id: str, user: User):
+    """Fetch an artifact and raise 403/404 if the caller can't see it.
+
+    404 when the artifact doesn't exist. 403 when it exists but the
+    caller isn't a member of its project. If the artifact has no
+    project_id yet (orphan from pre-backfill), treat as 404 — it's not
+    visible via the library and was never assigned.
+    """
+
+    from .core import Artifact
+
+    artifact = session.get(Artifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    if not artifact.project_id:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    _require_project_member_or_403(session, artifact.project_id, user)
+    return artifact
+
+
+def _require_conversation_access(session, conversation_id: str, user: User):
+    from .core import Conversation
+
+    conv = session.get(Conversation, conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not conv.project_id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    _require_project_member_or_403(session, conv.project_id, user)
+    return conv
+
+
+# ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
 @app.post(f"{settings.api_prefix}/projects", response_model=ProjectSummary)
@@ -374,16 +423,23 @@ def list_models():
 
 
 @app.get(f"{settings.api_prefix}/conversations", response_model=list[ConversationSummary])
-def get_conversations(user: CurrentUser, include_archived: bool = False):
+def get_conversations(
+    user: CurrentUser,
+    project_id: str,
+    include_archived: bool = False,
+):
     with session_factory() as session:
-        return list_conversations(session, include_archived=include_archived, owner_id=user.id)
+        _require_project_member_or_403(session, project_id, user)
+        return list_conversations(
+            session, include_archived=include_archived, project_id=project_id
+        )
 
 
 @app.post(f"{settings.api_prefix}/conversations/{{conversation_id}}/archive", response_model=ConversationSummary)
 def archive_conversation_endpoint(conversation_id: str, user: CurrentUser):
     with session_factory() as session:
+        _require_conversation_access(session, conversation_id, user)
         try:
-            get_conversation_or_404(session, conversation_id, owner_id=user.id)
             conversation = archive_conversation(session, conversation_id)
             return serialize_conversation(conversation, session)
         except ValueError as exc:
@@ -393,8 +449,8 @@ def archive_conversation_endpoint(conversation_id: str, user: CurrentUser):
 @app.post(f"{settings.api_prefix}/conversations/{{conversation_id}}/unarchive", response_model=ConversationSummary)
 def unarchive_conversation_endpoint(conversation_id: str, user: CurrentUser):
     with session_factory() as session:
+        _require_conversation_access(session, conversation_id, user)
         try:
-            get_conversation_or_404(session, conversation_id, owner_id=user.id)
             conversation = unarchive_conversation(session, conversation_id)
             return serialize_conversation(conversation, session)
         except ValueError as exc:
@@ -404,8 +460,8 @@ def unarchive_conversation_endpoint(conversation_id: str, user: CurrentUser):
 @app.delete(f"{settings.api_prefix}/conversations/{{conversation_id}}")
 def delete_conversation_endpoint(conversation_id: str, user: CurrentUser):
     with session_factory() as session:
+        _require_conversation_access(session, conversation_id, user)
         try:
-            get_conversation_or_404(session, conversation_id, owner_id=user.id)
             delete_conversation(session, conversation_id)
             return Response(status_code=204)
         except ValueError as exc:
@@ -413,19 +469,26 @@ def delete_conversation_endpoint(conversation_id: str, user: CurrentUser):
 
 
 @app.post(f"{settings.api_prefix}/conversations", response_model=ConversationSummary)
-def create_conversation(user: CurrentUser):
+def create_conversation(payload: ConversationCreateRequest, user: CurrentUser):
     from .core import create_conversation as create_db_conversation
 
     with session_factory() as session:
-        conversation = create_db_conversation(session, owner_id=user.id)
+        _require_project_member_or_403(session, payload.project_id, user)
+        conversation = create_db_conversation(
+            session,
+            seed_title=payload.seed_title,
+            project_id=payload.project_id,
+            owner_id=user.id,
+        )
         return serialize_conversation(conversation, session)
 
 
 @app.get(f"{settings.api_prefix}/conversations/{{conversation_id}}", response_model=ConversationDetail)
 def get_conversation(conversation_id: str, user: CurrentUser):
     with session_factory() as session:
+        _require_conversation_access(session, conversation_id, user)
         try:
-            return get_conversation_detail(session, conversation_id, owner_id=user.id)
+            return get_conversation_detail(session, conversation_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -433,8 +496,9 @@ def get_conversation(conversation_id: str, user: CurrentUser):
 @app.put(f"{settings.api_prefix}/artifacts/{{artifact_id}}")
 def update_artifact(artifact_id: str, payload: ArtifactUpdateRequest, user: CurrentUser):
     with session_factory() as session:
+        _require_artifact_access(session, artifact_id, user)
         try:
-            artifact = update_artifact_manually(session, artifact_id, payload, owner_id=user.id)
+            artifact = update_artifact_manually(session, artifact_id, payload)
             return artifact
         except ValueError as exc:
             status_code = 404 if "not found" in str(exc).lower() else 409
@@ -444,8 +508,9 @@ def update_artifact(artifact_id: str, payload: ArtifactUpdateRequest, user: Curr
 @app.get(f"{settings.api_prefix}/artifacts/{{artifact_id}}", response_model=ArtifactRead)
 def get_artifact(artifact_id: str, user: CurrentUser):
     with session_factory() as session:
+        _require_artifact_access(session, artifact_id, user)
         try:
-            return get_artifact_detail(session, artifact_id, mark_opened=True, owner_id=user.id)
+            return get_artifact_detail(session, artifact_id, mark_opened=True)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -453,27 +518,44 @@ def get_artifact(artifact_id: str, user: CurrentUser):
 @app.get(f"{settings.api_prefix}/library/artifacts", response_model=list[ArtifactListItem])
 def get_library_artifacts(
     user: CurrentUser,
+    project_id: str,
     artifact_type: ArtifactType | None = None,
     status: ArtifactStatus | None = None,
     q: str | None = None,
     limit: int = 100,
 ):
     with session_factory() as session:
+        _require_project_member_or_403(session, project_id, user)
         return list_library_artifacts(
             session,
             artifact_type=artifact_type.value if artifact_type else None,
             status=status.value if status else None,
             query_text=q,
             limit=limit,
-            owner_id=user.id,
+            project_id=project_id,
         )
 
 
 @app.post(f"{settings.api_prefix}/library/artifacts", response_model=ArtifactRead)
 def create_library_artifact_endpoint(payload: LibraryArtifactCreateRequest, user: CurrentUser):
     with session_factory() as session:
+        _require_project_member_or_403(session, payload.project_id, user)
+        # If a conversation_id is attached, the caller can only use one
+        # that's in the same project they just proved membership for.
+        if payload.conversation_id:
+            _require_conversation_access(session, payload.conversation_id, user)
+            from .core import Conversation
+
+            conv = session.get(Conversation, payload.conversation_id)
+            if conv is None or conv.project_id != payload.project_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="conversation_id belongs to a different project",
+                )
         try:
-            return create_library_artifact(session, payload, owner_id=user.id)
+            return create_library_artifact(
+                session, payload, project_id=payload.project_id, owner_id=user.id
+            )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -481,8 +563,9 @@ def create_library_artifact_endpoint(payload: LibraryArtifactCreateRequest, user
 @app.get(f"{settings.api_prefix}/library/artifacts/{{artifact_id}}", response_model=ArtifactRead)
 def get_library_artifact(artifact_id: str, user: CurrentUser):
     with session_factory() as session:
+        _require_artifact_access(session, artifact_id, user)
         try:
-            return get_artifact_detail(session, artifact_id, mark_opened=True, owner_id=user.id)
+            return get_artifact_detail(session, artifact_id, mark_opened=True)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -492,8 +575,9 @@ def update_library_artifact_endpoint(
     artifact_id: str, payload: ArtifactUpdateRequest, user: CurrentUser
 ):
     with session_factory() as session:
+        _require_artifact_access(session, artifact_id, user)
         try:
-            return update_artifact_manually(session, artifact_id, payload, owner_id=user.id)
+            return update_artifact_manually(session, artifact_id, payload)
         except ValueError as exc:
             status_code = 404 if "not found" in str(exc).lower() else 409
             raise HTTPException(status_code=status_code, detail=str(exc)) from exc
@@ -507,13 +591,13 @@ def diff_artifact(
     to_version: int | None = None,
 ):
     with session_factory() as session:
+        _require_artifact_access(session, artifact_id, user)
         try:
             return get_artifact_diff(
                 session,
                 artifact_id,
                 from_version=from_version,
                 to_version=to_version,
-                owner_id=user.id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -524,8 +608,8 @@ def download_artifact(
     artifact_id: str, user: CurrentUser, format: ExportFormat = ExportFormat.MARKDOWN
 ):
     with session_factory() as session:
+        _require_artifact_access(session, artifact_id, user)
         try:
-            get_artifact_detail(session, artifact_id, owner_id=user.id)
             body, media_type, filename = export_artifact(session, artifact_id, format.value)
             return Response(
                 content=body,
@@ -541,8 +625,8 @@ def download_artifact_from_rendered_html(
     artifact_id: str, payload: RenderedExportRequest, user: CurrentUser
 ):
     with session_factory() as session:
+        _require_artifact_access(session, artifact_id, user)
         try:
-            get_artifact_detail(session, artifact_id, owner_id=user.id)
             body, media_type, filename = export_artifact_from_rendered_html(
                 session, artifact_id, payload.format, payload.html
             )
@@ -591,6 +675,10 @@ def edit_last_user_chat(payload: EditLastUserRequest, user: CurrentUser):
 
 @app.post(f"{settings.api_prefix}/specs/draft")
 def draft_spec(payload: SpecDraftRequest, user: CurrentUser):
+    with session_factory() as session:
+        _require_project_member_or_403(session, payload.project_id, user)
+        if payload.conversation_id:
+            _require_conversation_access(session, payload.conversation_id, user)
     return StreamingResponse(
         spec_draft_service.stream_draft(payload),
         media_type="text/event-stream",
@@ -604,10 +692,7 @@ def draft_spec(payload: SpecDraftRequest, user: CurrentUser):
 )
 def verify_artifact_citations(artifact_id: str, user: CurrentUser, force: bool = False):
     with session_factory() as session:
-        try:
-            get_artifact_detail(session, artifact_id, owner_id=user.id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        _require_artifact_access(session, artifact_id, user)
     try:
         result = citation_verify_service.verify(artifact_id, force=force)
     except GitHubAuthError as exc:

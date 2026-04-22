@@ -97,6 +97,7 @@ class SpecDraftService:
         try:
             return drafter.draft(
                 conversation_id=payload.conversation_id,
+                project_id=payload.project_id,
                 transcript=payload.transcript,
                 repo=payload.repo,
             )
@@ -131,6 +132,7 @@ class SpecDraftService:
             try:
                 result = drafter.draft(
                     conversation_id=payload.conversation_id,
+                    project_id=payload.project_id,
                     transcript=payload.transcript,
                     repo=payload.repo,
                     on_event=emit,

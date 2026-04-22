@@ -318,6 +318,7 @@ class RFCDrafter:
         self,
         *,
         conversation_id: str | None,
+        project_id: str,
         transcript: str,
         repo: str,
         on_event: "Callable[[dict[str, Any]], None] | None" = None,
@@ -397,11 +398,14 @@ class RFCDrafter:
             if conversation_id:
                 conversation = get_conversation_or_404(session, conversation_id)
             else:
-                conversation = create_conversation(session, pass2["title"])
+                conversation = create_conversation(
+                    session, pass2["title"], project_id=project_id
+                )
 
             artifact = Artifact(
                 conversation_id=conversation.id,
                 origin_conversation_id=conversation.id,
+                project_id=project_id,
                 title=pass2["title"][:240],
                 content=pass2["markdown_body"],
                 content_type="markdown",

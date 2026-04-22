@@ -380,13 +380,21 @@ def list_conversations(
     session: Session,
     *,
     include_archived: bool = False,
-    owner_id: str | None = None,
+    project_id: str,
 ) -> list[ConversationSummary]:
-    query = select(Conversation).order_by(Conversation.updated_at.desc())
+    """List conversations in a project.
+
+    Callers must pass a ``project_id``; membership is enforced by the
+    endpoint layer before this function is reached.
+    """
+
+    query = (
+        select(Conversation)
+        .where(Conversation.project_id == project_id)
+        .order_by(Conversation.updated_at.desc())
+    )
     if not include_archived:
         query = query.where(Conversation.archived_at.is_(None))
-    if owner_id is not None:
-        query = query.where(Conversation.owner_id == owner_id)
     conversations = session.scalars(query).all()
     return [serialize_conversation(item, session) for item in conversations]
 
@@ -398,14 +406,9 @@ def list_library_artifacts(
     status: str | None = None,
     query_text: str | None = None,
     limit: int = 100,
-    owner_id: str | None = None,
+    project_id: str,
 ) -> list[ArtifactListItem]:
-    stmt = select(Artifact)
-
-    if owner_id is not None:
-        stmt = stmt.join(Conversation, Artifact.conversation_id == Conversation.id).where(
-            Conversation.owner_id == owner_id
-        )
+    stmt = select(Artifact).where(Artifact.project_id == project_id)
 
     if artifact_type:
         stmt = stmt.where(
@@ -461,10 +464,18 @@ def create_conversation(
     session: Session,
     seed_title: str | None = None,
     *,
+    project_id: str,
     owner_id: str | None = None,
 ) -> Conversation:
+    """Create a new conversation inside a project.
+
+    ``owner_id`` is retained on the row as a legacy trace (it still maps
+    to the creator) but authorization is driven by ``project_id`` and
+    project membership, not by owner_id.
+    """
+
     title = (seed_title or "New workpad").strip() or "New workpad"
-    conversation = Conversation(title=title[:240], owner_id=owner_id)
+    conversation = Conversation(title=title[:240], owner_id=owner_id, project_id=project_id)
     session.add(conversation)
     session.commit()
     session.refresh(conversation)
@@ -474,13 +485,9 @@ def create_conversation(
 def get_conversation_or_404(
     session: Session,
     conversation_id: str,
-    *,
-    owner_id: str | None = None,
 ) -> Conversation:
     conversation = session.get(Conversation, conversation_id)
     if conversation is None:
-        raise ValueError("Conversation not found")
-    if owner_id is not None and conversation.owner_id not in (None, owner_id):
         raise ValueError("Conversation not found")
     return conversation
 
@@ -488,10 +495,8 @@ def get_conversation_or_404(
 def get_conversation_detail(
     session: Session,
     conversation_id: str,
-    *,
-    owner_id: str | None = None,
 ) -> ConversationDetail:
-    conversation = get_conversation_or_404(session, conversation_id, owner_id=owner_id)
+    conversation = get_conversation_or_404(session, conversation_id)
     messages = session.scalars(select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at.asc())).all()
     artifacts = session.scalars(select(Artifact).where(Artifact.conversation_id == conversation_id).order_by(Artifact.updated_at.desc())).all()
     active_artifact_id = artifacts[0].id if artifacts else None
@@ -655,10 +660,8 @@ def update_artifact_manually(
     session: Session,
     artifact_id: str,
     payload: ArtifactUpdateRequest,
-    *,
-    owner_id: str | None = None,
 ) -> ArtifactRead:
-    artifact = get_artifact_or_404(session, artifact_id, owner_id=owner_id)
+    artifact = get_artifact_or_404(session, artifact_id)
     if payload.expected_version and artifact.version != payload.expected_version:
         raise ValueError("Artifact version mismatch")
 
@@ -692,18 +695,30 @@ def create_library_artifact(
     session: Session,
     payload: LibraryArtifactCreateRequest,
     *,
+    project_id: str,
     owner_id: str | None = None,
 ) -> ArtifactRead:
+    """Create a library-owned artifact under a project.
+
+    If ``payload.conversation_id`` is given, the artifact attaches to
+    that existing conversation; the caller must have verified that
+    conversation's project membership before calling this. Otherwise a
+    backing conversation is created inside the same project.
+    """
+
     if payload.conversation_id:
-        conversation = get_conversation_or_404(session, payload.conversation_id, owner_id=owner_id)
+        conversation = get_conversation_or_404(session, payload.conversation_id)
     else:
-        conversation = Conversation(title=payload.title[:240], owner_id=owner_id)
+        conversation = Conversation(
+            title=payload.title[:240], owner_id=owner_id, project_id=project_id
+        )
         session.add(conversation)
         session.flush()
 
     artifact = Artifact(
         conversation_id=conversation.id,
         origin_conversation_id=conversation.id,
+        project_id=project_id,
         title=payload.title[:240],
         content=payload.content,
         content_type=payload.content_type.value,
@@ -726,16 +741,10 @@ def create_library_artifact(
 def get_artifact_or_404(
     session: Session,
     artifact_id: str,
-    *,
-    owner_id: str | None = None,
 ) -> Artifact:
     artifact = session.get(Artifact, artifact_id)
     if artifact is None:
         raise ValueError("Artifact not found")
-    if owner_id is not None:
-        owner = artifact.conversation.owner_id if artifact.conversation else None
-        if owner not in (None, owner_id):
-            raise ValueError("Artifact not found")
     return artifact
 
 
@@ -744,9 +753,8 @@ def get_artifact_detail(
     artifact_id: str,
     *,
     mark_opened: bool = False,
-    owner_id: str | None = None,
 ) -> ArtifactRead:
-    artifact = get_artifact_or_404(session, artifact_id, owner_id=owner_id)
+    artifact = get_artifact_or_404(session, artifact_id)
     if mark_opened:
         artifact.last_opened_at = utcnow()
         session.commit()
@@ -760,7 +768,6 @@ def get_artifact_diff(
     *,
     from_version: int | None = None,
     to_version: int | None = None,
-    owner_id: str | None = None,
 ) -> dict[str, Any]:
     """Unified diff between two snapshots of an artifact.
 
@@ -770,7 +777,7 @@ def get_artifact_diff(
 
     import difflib
 
-    artifact = get_artifact_or_404(session, artifact_id, owner_id=owner_id)
+    artifact = get_artifact_or_404(session, artifact_id)
 
     versions = list(
         session.scalars(

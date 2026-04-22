@@ -68,6 +68,18 @@ def _github_handler(request: httpx.Request) -> httpx.Response:
 
 
 def test_end_to_end_draft_persists_artifact_sources_and_citations(session_factory) -> None:
+    from app.auth import User, hash_password
+    from app.projects import ensure_personal_project
+
+    # Drafter now requires a project_id. Set one up.
+    with session_factory() as session:
+        user = User(email="e2e@example.com", password_hash=hash_password("correct-horse"))
+        session.add(user)
+        session.flush()
+        project = ensure_personal_project(session, user.id)
+        session.commit()
+        project_id = project.id
+
     client = GitHubClient("test-token", transport=httpx.MockTransport(_github_handler))
     reader = CachedGitHubReader(client, session_factory)
 
@@ -136,6 +148,7 @@ def test_end_to_end_draft_persists_artifact_sources_and_citations(session_factor
     )
     result = drafter.draft(
         conversation_id=None,
+        project_id=project_id,
         transcript=transcript,
         repo="acme/foo",
     )

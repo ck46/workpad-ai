@@ -120,3 +120,16 @@ def authed_client(client: TestClient, authed_user: dict[str, str]) -> TestClient
     """A TestClient already signed in as ``authed_user``."""
 
     return client
+
+
+@pytest.fixture
+def authed_project(authed_client: TestClient) -> dict[str, str]:
+    """A freshly-created project owned by ``authed_user``.
+
+    Returns the ProjectSummary payload so tests can pass
+    ``authed_project["id"]`` as a project_id to scoped endpoints.
+    """
+
+    r = authed_client.post("/api/projects", json={"name": "Default Test Project"})
+    assert r.status_code == 200, r.text
+    return r.json()

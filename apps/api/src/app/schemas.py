@@ -156,6 +156,7 @@ class ArtifactUpdateRequest(BaseModel):
 
 
 class LibraryArtifactCreateRequest(BaseModel):
+    project_id: str
     title: str = Field(min_length=1, max_length=240)
     content: str = Field(default="", max_length=500_000)
     content_type: ContentType = ContentType.MARKDOWN
@@ -163,6 +164,11 @@ class LibraryArtifactCreateRequest(BaseModel):
     status: ArtifactStatus = ArtifactStatus.DRAFT
     summary: str = Field(default="", max_length=4_000)
     conversation_id: str | None = None
+
+
+class ConversationCreateRequest(BaseModel):
+    project_id: str
+    seed_title: str | None = None
 
 
 class SearchReplacePatch(BaseModel):
@@ -214,6 +220,7 @@ class CitationRead(BaseModel):
 
 
 class SpecDraftRequest(BaseModel):
+    project_id: str
     conversation_id: str | None = None
     transcript: str = Field(min_length=1, max_length=200_000)
     repo: str = Field(min_length=3, max_length=240)
