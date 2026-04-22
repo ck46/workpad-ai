@@ -32,17 +32,17 @@ Broken into substeps 1A–1F that can be landed and tested independently. Items 
 
 ### 1C — Project schema + endpoints
 
-- [ ] `Project` model (id, name, created_by_user_id, created_at, updated_at).
-- [ ] `ProjectMember` model (id, project_id, user_id, role enum `owner|member`, created_at). Unique on `(project_id, user_id)`.
-- [ ] `Invite` model (id, project_id, email, token_hash, invited_by_user_id, accepted_at, expires_at, created_at).
-- [ ] `POST /api/projects` — body `{ name }`. Creates project, adds caller as `owner` member.
-- [ ] `GET /api/projects` — list projects the caller is a member of.
-- [ ] `GET /api/projects/{id}` — 403 if caller not a member.
-- [ ] `POST /api/projects/{id}/invites` — owner-only for v1. Body `{ email }`. Persists token hash; returns the signed token so the caller can copy a link (v1 has no mailer).
-- [ ] `POST /api/invites/accept` — body `{ token }`. If token valid + unexpired + unused, creates `ProjectMember` for the caller and marks invite accepted. Returns the project.
-- [ ] `apps/api/tests/test_projects.py` covering create, list, 403 on non-member, invite flow, expired invite, reused invite, invite creating-vs-accepting user identity, role checks.
+- [x] `Project` model (id, name, created_by_user_id, created_at, updated_at). *Commit `0ee5aa2`.*
+- [x] `ProjectMember` model (id, project_id, user_id, role `owner|member`, created_at). Unique on `(project_id, user_id)`. *Commit `0ee5aa2`.*
+- [x] `Invite` model with bearer-token semantics (id, project_id, email, token_hash, invited_by_user_id, accepted_at, expires_at, created_at). *Commit `0ee5aa2`.*
+- [x] `POST /api/projects` — body `{ name }`. Creates project, adds caller as `owner` member. *Commit `534e62b`.*
+- [x] `GET /api/projects` — list projects the caller is a member of. *Commit `534e62b`.*
+- [x] `GET /api/projects/{id}` — 403 if caller not a member. Payload includes members + pending invites. *Commit `534e62b`.*
+- [x] `POST /api/projects/{id}/invites` — owner-only. Body `{ email }`. Persists token hash; response includes `token` + `accept_url` (v1 has no mailer, caller copies the URL). *Commit `534e62b`.*
+- [x] `POST /api/invites/accept` — body `{ token }`. If token valid + unexpired + unused, creates `ProjectMember` for the caller and marks invite accepted. Preserves an existing role when already a member (no accidental downgrade). *Commit `534e62b`.*
+- [x] `apps/api/tests/test_projects.py` — 15 tests covering create (auth + blank-name), list scoping, detail membership guard + payload shape, owner-only invite creation, accept_url shape, invalid email, end-to-end invite flow, reuse rejection, expiry, bogus token, role preservation, accept auth guard. *Commit `a268dc1`.*
 
-**Exit:** From curl/httpie: signup user A, create project, issue invite, signup user B, accept invite, user B sees project in `GET /api/projects`.
+**Exit:** From the test suite end-to-end: signup user A, create project, issue invite, signup user B, accept invite, user B sees project in `GET /api/projects` and `GET /api/projects/{id}` as a `member`. 75 tests green (was 60).
 
 ### 1D — Scope pads + conversations to projects
 
