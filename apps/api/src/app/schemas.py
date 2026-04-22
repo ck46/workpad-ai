@@ -258,3 +258,12 @@ class UserRead(BaseModel):
     email: str
     name: str
     created_at: datetime
+
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str

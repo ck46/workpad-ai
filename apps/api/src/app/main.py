@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -10,10 +11,12 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from .auth import (
     User,
     clear_session_cookie,
+    confirm_password_reset,
     create_session,
     create_user,
     find_user_by_email,
     get_current_user,
+    request_password_reset,
     revoke_session,
     set_session_cookie,
     verify_password,
@@ -53,6 +56,8 @@ from .schemas import (
     ExportFormat,
     LibraryArtifactCreateRequest,
     ModelInfo,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     RegenerateRequest,
     RenderedExportRequest,
     SignInRequest,
@@ -64,6 +69,9 @@ from .schemas import (
 from .spec_service import CitationInsightService, CitationVerifyService, SpecDraftService
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+logger = logging.getLogger(__name__)
 
 
 settings = get_settings()
@@ -157,6 +165,45 @@ def signout(request: Request):
 @app.get(f"{settings.api_prefix}/auth/me", response_model=UserRead)
 def me(user: CurrentUser):
     return _user_to_read(user)
+
+
+@app.post(f"{settings.api_prefix}/auth/reset-request", status_code=202)
+def auth_reset_request(payload: PasswordResetRequest, request: Request):
+    """Ask for a password reset link.
+
+    Returns 202 regardless of whether the email corresponds to a real user —
+    this is deliberate so callers can't enumerate accounts. When a matching
+    user exists and no recent token was issued, log the reset URL. In v1
+    there is no mailer; the URL lands in the server log for the operator.
+    """
+
+    email = (payload.email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+    with session_factory() as session:
+        result = request_password_reset(session, email)
+    if result is not None:
+        _user, raw_token = result
+        base = f"{request.url.scheme}://{request.url.netloc}"
+        reset_url = f"{base}/#/reset?token={raw_token}"
+        logger.info("password-reset-url email=%s url=%s", email, reset_url)
+    return {"status": "ok"}
+
+
+@app.post(f"{settings.api_prefix}/auth/reset-confirm", status_code=204)
+def auth_reset_confirm(payload: PasswordResetConfirm):
+    token = (payload.token or "").strip()
+    new_password = payload.new_password or ""
+    if not token or not new_password:
+        raise HTTPException(status_code=400, detail="token and new_password are required")
+    with session_factory() as session:
+        try:
+            user = confirm_password_reset(session, token, new_password)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if user is None:
+        raise HTTPException(status_code=400, detail="invalid or expired reset token")
+    return Response(status_code=204)
 
 
 @app.get(f"{settings.api_prefix}/settings/info")

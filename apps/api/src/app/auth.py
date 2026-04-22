@@ -14,6 +14,7 @@ Password hashing: stdlib ``hashlib.scrypt``. Keeps the dep footprint zero.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,9 @@ from sqlalchemy import DateTime, ForeignKey, String, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .core import Base, get_session_factory, utcnow
+
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +43,10 @@ _MAX_PASSWORD_BYTES = 1024
 
 SESSION_COOKIE = "wp_session"
 SESSION_TTL_DAYS = 30
+
+# Password reset
+RESET_TOKEN_TTL_HOURS = 24
+RESET_REQUEST_COOLDOWN_SECONDS = 60  # per-user throttle
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +70,17 @@ class UserSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -209,3 +228,95 @@ def clear_session_cookie(response: Response) -> None:
 # Public accessor so callers don't need to import private helpers
 def read_cookie_session_id(wp_session: str | None) -> str | None:
     return wp_session or None
+
+
+# ---------------------------------------------------------------------------
+# Password reset
+# ---------------------------------------------------------------------------
+def _hash_reset_token(raw: str) -> str:
+    """One-way hash for reset tokens — sha256 is fine here (token is
+    already 32 bytes of secure random; we just need to avoid storing raw)."""
+
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def request_password_reset(session: Session, email: str) -> tuple[User, str] | None:
+    """Issue a password reset token for ``email``.
+
+    Returns (user, raw_token) when a fresh token was created, or ``None``
+    if no such user exists or a token was issued within the cooldown
+    window. Callers should always surface a neutral response to avoid
+    leaking which emails exist.
+
+    The raw token is only returned so the caller can log/email it — it is
+    NOT persisted; only ``sha256(token)`` is stored.
+    """
+
+    user = find_user_by_email(session, email)
+    if user is None:
+        return None
+
+    now = utcnow()
+    cooldown_cutoff = now - timedelta(seconds=RESET_REQUEST_COOLDOWN_SECONDS)
+    recent = session.scalar(
+        select(PasswordResetToken)
+        .where(PasswordResetToken.user_id == user.id)
+        .where(PasswordResetToken.created_at > cooldown_cutoff)
+        .where(PasswordResetToken.used_at.is_(None))
+    )
+    if recent is not None:
+        return None
+
+    raw = secrets.token_urlsafe(32)
+    record = PasswordResetToken(
+        user_id=user.id,
+        token_hash=_hash_reset_token(raw),
+        expires_at=now + timedelta(hours=RESET_TOKEN_TTL_HOURS),
+    )
+    session.add(record)
+    session.commit()
+    return user, raw
+
+
+def confirm_password_reset(session: Session, token: str, new_password: str) -> User | None:
+    """Consume a reset token and set a new password.
+
+    Returns the user on success, ``None`` if the token is invalid/expired/
+    already used. On success, all of the user's existing sessions are
+    revoked so stolen-cookie scenarios fail closed; the caller is left
+    logged out and must sign back in with the new password.
+    """
+
+    if not token or not new_password:
+        return None
+    if len(new_password) < 8:
+        raise ValueError("password must be at least 8 characters")
+
+    digest = _hash_reset_token(token)
+    record = session.scalar(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == digest)
+    )
+    if record is None or record.used_at is not None:
+        return None
+    if record.expires_at.replace(tzinfo=UTC) < utcnow():
+        return None
+
+    user = session.get(User, record.user_id)
+    if user is None:
+        return None
+
+    user.password_hash = hash_password(new_password)
+    record.used_at = utcnow()
+
+    # Fail closed on session-theft: revoke everything else outstanding.
+    live_sessions = session.scalars(
+        select(UserSession)
+        .where(UserSession.user_id == user.id)
+        .where(UserSession.revoked_at.is_(None))
+    ).all()
+    now = utcnow()
+    for us in live_sessions:
+        us.revoked_at = now
+
+    session.commit()
+    return user
