@@ -22,12 +22,13 @@ Broken into substeps 1A–1F that can be landed and tested independently. Items 
 
 ### 1B — Password reset + auth tests
 
-- [ ] `PasswordResetToken` SQLAlchemy model (id, user_id FK, token_hash, expires_at, used_at, created_at).
-- [ ] `POST /api/auth/reset-request` — takes `{ email }`. No-op (200) on unknown email to avoid enumeration. Rate-limit per IP + per email. For v1, log the reset URL to stderr (no SMTP dependency — flag for a later email-adapter chore).
-- [ ] `POST /api/auth/reset-confirm` — takes `{ token, new_password }`. Consumes the token, updates `password_hash`, revokes all other `UserSession` rows for that user, leaves caller logged out.
-- [ ] New `apps/api/tests/test_auth.py` covering signup/signin/signout/me/reset-request/reset-confirm, including: duplicate-email rejection, wrong password, expired session, unknown-email reset no-op, token reuse, token expiry.
+- [x] `PasswordResetToken` SQLAlchemy model (id, user_id FK CASCADE, token_hash, expires_at, used_at, created_at). *Commit `a9fdc0b`.*
+- [x] `POST /api/auth/reset-request` — takes `{ email }`. Returns 202 on unknown email to avoid enumeration. Per-user 60s cooldown. Logs the reset URL to the app logger (no SMTP in v1; a real mailer is a separate concern). *Commit `a9fdc0b`.*
+- [x] `POST /api/auth/reset-confirm` — takes `{ token, new_password }`. Consumes the token, updates `password_hash`, revokes ALL live `UserSession` rows for that user, leaves caller logged out. *Commit `a9fdc0b`.*
+- [x] New `apps/api/tests/test_auth.py` covering signup/signin/signout/me/reset-request/reset-confirm: email normalization, duplicate rejection, short-password rejection, wrong-password signin 401, fresh cookie on signin, signout revocation, expired-session anonymity, unknown-email 202 with no URL logged, neutral-log behavior, cooldown, token reuse, token expiry, bogus token, short-new-password rejection. *Commit `e6f05c9`; 18 new tests.*
+- [x] Also repaired `tests/test_library_api.py` (3 tests were 401-failing since `f2844f2` introduced auth) and added a shared `authed_client` / `authed_user` fixture in `conftest.py`. *Commit `b5218f1`.*
 
-**Exit:** Forgotten-password round trip works end-to-end locally. `uv run pytest` green with new auth test file.
+**Exit:** Forgotten-password round trip works end-to-end locally. `uv run pytest` is green with 60 tests (was 42).
 
 ### 1C — Project schema + endpoints
 
