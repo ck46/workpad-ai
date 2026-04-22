@@ -40,6 +40,13 @@ Rules:
 - If a user wants to modify an existing artifact, prefer action=patch when the edit is targeted and replace when the artifact should be rewritten.
 - Tool summaries should be short and concrete.
 - Never emit raw JSON to the user unless they explicitly ask for it.
+
+Chat-reply rules (important):
+- EVERY turn must end with an assistant chat message. Never let the workpad edit be your only response.
+- When you call canvas_apply, immediately after the tool completes, send a short chat message (1-3 sentences) describing what you changed so the user can follow along. List the sections you added or edited, what action you took (created / rewrote / patched), and any notable caveats.
+- If you did NOT use the workpad, still reply in chat — do not be silent.
+- Do not dump the artifact content into chat; refer to it in the workpad on the right.
+- The chat text is separate from the tool's summary field — write it for the human, not for the log.
 """
 
 ANTHROPIC_MAX_TOKENS = 8192
@@ -52,6 +59,54 @@ def sse_event(payload: dict[str, Any]) -> str:
 def chunk_text(value: str, chunk_size: int = 180) -> Iterator[str]:
     for index in range(0, len(value), chunk_size):
         yield value[index : index + chunk_size]
+
+
+def _post_edit_instruction(tool_summaries: list[str]) -> str:
+    """Nudge sent to the model after a canvas edit so it always speaks in chat.
+
+    The tool's `summary` field is for the log; this instruction asks the model
+    to produce a human-facing note describing what just happened. Keep it
+    short — one or two sentences is enough for the user to follow along.
+    """
+
+    base = (
+        "The workpad was just updated. Now reply in chat with 1–3 sentences "
+        "describing what you changed so the user can follow along. Mention "
+        "the sections you touched and any decisions you made. Do not paste "
+        "the artifact content here."
+    )
+    if tool_summaries:
+        joined = "; ".join(summary.strip().rstrip(".") for summary in tool_summaries if summary)
+        if joined:
+            base += f"\n\nTool summaries: {joined}."
+    return base
+
+
+_ACTION_VERB = {
+    "create": "created",
+    "replace": "rewrote",
+    "patch": "edited",
+}
+
+
+def _fallback_chat_summary(mutations: list[tuple[str, str, str]]) -> str:
+    """Human-readable fallback when the model emits no chat text at all.
+
+    `mutations` is a list of (action, title, summary). We string together a
+    short sentence per mutation so the chat still tells the user what happened.
+    """
+
+    if not mutations:
+        return ""
+    parts: list[str] = []
+    for action, title, summary in mutations:
+        verb = _ACTION_VERB.get(action, "updated")
+        sentence = f"I {verb} the workpad \u201c{title}\u201d"
+        tail = (summary or "").strip()
+        if tail:
+            sentence += f" — {tail.rstrip('.')}"
+        parts.append(sentence + ".")
+    return " ".join(parts)
 
 
 def _canvas_parameters_schema() -> dict[str, Any]:
@@ -603,6 +658,7 @@ class WorkpadChatService:
 
         tool_output_items: list[dict[str, Any]] = []
         tool_summaries: list[str] = []
+        mutation_records: list[tuple[str, str, str]] = []
         current_artifact_id = current_artifact_id_from_payload(payload.current_artifact)
 
         for tool_call in first_pass.tool_calls:
@@ -611,7 +667,8 @@ class WorkpadChatService:
             tool_payload = CanvasToolCall.model_validate_json(tool_call.arguments)
             mutation = apply_canvas_tool(session, conversation, tool_payload, current_artifact_id=current_artifact_id)
             current_artifact_id = mutation.artifact.id
-            tool_summaries.append(f"{mutation.summary} Saved in the workpad as \"{mutation.artifact.title}\".")
+            tool_summaries.append(mutation.summary)
+            mutation_records.append((mutation.action, mutation.artifact.title, mutation.summary))
             artifact_payload = serialize_artifact(mutation.artifact).model_dump(mode="json")
             yield from self._emit_artifact_commit(tool_call, mutation, artifact_payload)
             tool_output_items.append(
@@ -632,10 +689,24 @@ class WorkpadChatService:
 
         follow_up_text = ""
         if tool_output_items and first_pass.openai_response_id:
+            # Inline nudge so the second pass always produces a chat reply —
+            # tool-only responses otherwise leave the chat silent.
+            follow_up_items: list[dict[str, Any]] = list(tool_output_items) + [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": _post_edit_instruction(tool_summaries),
+                        }
+                    ],
+                }
+            ]
             follow_up_stream, follow_up = self._stream_openai(
                 spec,
                 payload,
-                tool_output_items,
+                follow_up_items,
                 tool_choice="none",
                 previous_response_id=first_pass.openai_response_id,
             )
@@ -643,7 +714,7 @@ class WorkpadChatService:
                 yield chunk
             follow_up_text = follow_up.text.strip()
 
-        yield from self._finalize(session, conversation, first_pass.text, follow_up_text, tool_summaries)
+        yield from self._finalize(session, conversation, first_pass.text, follow_up_text, mutation_records)
 
     def _orchestrate_anthropic(self, session, conversation, payload, spec, base_input) -> Iterator[str]:
         messages = [{"role": item["role"], "content": item["content"]} for item in base_input]
@@ -654,6 +725,7 @@ class WorkpadChatService:
 
         tool_results: list[dict[str, Any]] = []
         tool_summaries: list[str] = []
+        mutation_records: list[tuple[str, str, str]] = []
         current_artifact_id = current_artifact_id_from_payload(payload.current_artifact)
 
         for tool_call in first_pass.tool_calls:
@@ -662,7 +734,8 @@ class WorkpadChatService:
             tool_payload = CanvasToolCall.model_validate_json(tool_call.arguments)
             mutation = apply_canvas_tool(session, conversation, tool_payload, current_artifact_id=current_artifact_id)
             current_artifact_id = mutation.artifact.id
-            tool_summaries.append(f"{mutation.summary} Saved in the workpad as \"{mutation.artifact.title}\".")
+            tool_summaries.append(mutation.summary)
+            mutation_records.append((mutation.action, mutation.artifact.title, mutation.summary))
             artifact_payload = serialize_artifact(mutation.artifact).model_dump(mode="json")
             yield from self._emit_artifact_commit(tool_call, mutation, artifact_payload)
             tool_results.append(
@@ -683,23 +756,54 @@ class WorkpadChatService:
 
         follow_up_text = ""
         if tool_results and first_pass.anthropic_assistant_blocks:
+            # Anthropic requires tool_result content blocks to sit in the user
+            # turn that immediately follows the assistant's tool_use. We append
+            # a plain text block in the same user turn asking for the chat
+            # summary so the model doesn't leave chat empty.
+            follow_up_user_content = list(tool_results) + [
+                {"type": "text", "text": _post_edit_instruction(tool_summaries)}
+            ]
             follow_up_messages = messages + [
                 {"role": "assistant", "content": first_pass.anthropic_assistant_blocks},
-                {"role": "user", "content": tool_results},
+                {"role": "user", "content": follow_up_user_content},
             ]
             follow_up_stream, follow_up = self._stream_anthropic(spec, payload, follow_up_messages, tool_choice="none")
             for chunk in follow_up_stream:
                 yield chunk
             follow_up_text = follow_up.text.strip()
 
-        yield from self._finalize(session, conversation, first_pass.text, follow_up_text, tool_summaries)
+        yield from self._finalize(session, conversation, first_pass.text, follow_up_text, mutation_records)
 
-    def _finalize(self, session, conversation, first_pass_text: str, follow_up_text: str, tool_summaries: list[str]) -> Iterator[str]:
-        final_text = " ".join(part for part in [first_pass_text.strip(), follow_up_text] if part).strip()
-        if not final_text:
-            final_text = " ".join(tool_summaries).strip()
-        if not final_text:
-            final_text = "The workpad is ready."
+    def _finalize(
+        self,
+        session,
+        conversation,
+        first_pass_text: str,
+        follow_up_text: str,
+        mutation_records: list[tuple[str, str, str]],
+    ) -> Iterator[str]:
+        """Persist the assistant turn. We always emit *some* chat text so the
+        user knows what happened, even when the model only touched the canvas
+        and skipped natural-language output.
+        """
+
+        model_text = " ".join(
+            part for part in [first_pass_text.strip(), follow_up_text] if part
+        ).strip()
+
+        if model_text:
+            final_text = model_text
+        else:
+            fallback = _fallback_chat_summary(mutation_records)
+            final_text = fallback or "The workpad is ready."
+
+        # If the model produced text but it reads generic (e.g. "Done."), we
+        # still surface the per-edit fallback below so the user sees what
+        # changed. The user's chat always contains at least the fallback.
+        if mutation_records and len(final_text) < 12:
+            appended = _fallback_chat_summary(mutation_records)
+            if appended and appended not in final_text:
+                final_text = f"{final_text} {appended}".strip()
 
         assistant_message = add_message(session, conversation, "assistant", final_text)
         yield sse_event({"type": "assistant.message.completed", "message": serialize_message(assistant_message).model_dump(mode="json")})
