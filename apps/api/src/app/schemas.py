@@ -337,3 +337,27 @@ class InviteCreateResponse(BaseModel):
 
 class InviteAcceptRequest(BaseModel):
     token: str
+
+
+# ---------------------------------------------------------------------------
+# Scaffold
+# ---------------------------------------------------------------------------
+class ScaffoldRequest(BaseModel):
+    text: str | None = None
+    repo_url: str | None = None
+    hint: str | None = None
+    # Optional. When set, the scaffold attaches to that existing project
+    # (caller must be a member). When absent, a new project is created.
+    project_id: str | None = None
+
+
+class ScaffoldResponse(BaseModel):
+    project: ProjectSummary
+    project_created: bool
+    artifact_id: str
+    conversation_id: str
+    pad_type: ArtifactType
+    pad_title: str
+    source_id: str | None
+    outline_sections: list[str]
+    detected_repo_urls: list[str]

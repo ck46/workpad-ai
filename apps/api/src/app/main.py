@@ -83,6 +83,8 @@ from .schemas import (
     ProjectSummary,
     RegenerateRequest,
     RenderedExportRequest,
+    ScaffoldRequest,
+    ScaffoldResponse,
     SignInRequest,
     SignUpRequest,
     SpecDraftRequest,
@@ -683,6 +685,106 @@ def draft_spec(payload: SpecDraftRequest, user: CurrentUser):
         spec_draft_service.stream_draft(payload),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
+    )
+
+
+@app.post(f"{settings.api_prefix}/scaffold", response_model=ScaffoldResponse)
+def scaffold_endpoint(payload: ScaffoldRequest, user: CurrentUser):
+    """Scaffold a project + pad from one-step seed input.
+
+    Covers the "first session produces value" design principle — the
+    caller hands us some raw material (pasted transcript, repo URL,
+    free-form hint) and we return a populated project with an outlined
+    pad ready to edit.
+    """
+
+    from openai import OpenAI
+
+    from .projects import (
+        NotAMember,
+        Project,
+        ProjectMember,
+        ROLE_OWNER,
+    )
+    from .rfc_drafter import OpenAIResponsesAIClient
+    from .scaffold_service import ScaffoldService
+
+    # Rudimentary request validation — the rest happens in the service.
+    if not (payload.text or payload.repo_url or payload.hint):
+        raise HTTPException(
+            status_code=400,
+            detail="scaffold requires at least one of text, repo_url, or hint",
+        )
+    current_settings = get_settings()
+    if not current_settings.openai_api_key:
+        raise HTTPException(
+            status_code=503, detail="OPENAI_API_KEY is not configured on the server"
+        )
+
+    # Membership check up front so we don't spend a model call on a
+    # request that can't write to the requested project.
+    if payload.project_id:
+        with session_factory() as session:
+            try:
+                _require_project_member_or_403(session, payload.project_id, user)
+            except HTTPException:
+                raise
+
+    try:
+        openai_client = OpenAI(api_key=current_settings.openai_api_key)
+        ai_client = OpenAIResponsesAIClient(openai_client, current_settings.default_model)
+        service = ScaffoldService(
+            ai_client=ai_client,
+            session_factory=session_factory,
+            model=current_settings.default_model,
+        )
+        result = service.scaffold(
+            user_id=user.id,
+            text=payload.text,
+            repo_url=payload.repo_url,
+            hint=payload.hint,
+            project_id=payload.project_id,
+        )
+    except NotAMember as exc:
+        raise HTTPException(status_code=403, detail="not a member of this project") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        # Model/network failures — surface as 502 so the frontend can
+        # distinguish from validation errors.
+        if exc.__class__.__module__.startswith("openai"):
+            raise HTTPException(status_code=502, detail=str(exc) or "model error") from exc
+        raise
+
+    # Build the ProjectSummary from the DB — need the caller's role.
+    with session_factory() as session:
+        project = session.get(Project, result.project_id)
+        if project is None:
+            raise HTTPException(status_code=500, detail="scaffold completed but project is missing")
+        member = (
+            session.query(ProjectMember)
+            .filter_by(project_id=project.id, user_id=user.id)
+            .first()
+        )
+        role = member.role if member else ROLE_OWNER
+        project_summary = ProjectSummary(
+            id=project.id,
+            name=project.name,
+            role=ProjectRole(role),
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+        )
+
+    return ScaffoldResponse(
+        project=project_summary,
+        project_created=result.project_created,
+        artifact_id=result.artifact_id,
+        conversation_id=result.conversation_id,
+        pad_type=ArtifactType(result.pad_type),
+        pad_title=result.pad_title,
+        source_id=result.source_id,
+        outline_sections=result.outline_sections,
+        detected_repo_urls=result.detected_repo_urls,
     )
 
 
