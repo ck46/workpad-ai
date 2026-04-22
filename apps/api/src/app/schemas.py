@@ -267,3 +267,66 @@ class PasswordResetRequest(BaseModel):
 class PasswordResetConfirm(BaseModel):
     token: str
     new_password: str
+
+
+# ---------------------------------------------------------------------------
+# Projects
+# ---------------------------------------------------------------------------
+class ProjectRole(StrEnum):
+    OWNER = "owner"
+    MEMBER = "member"
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str
+
+
+class ProjectSummary(BaseModel):
+    id: str
+    name: str
+    role: ProjectRole
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectMemberRead(BaseModel):
+    user_id: str
+    email: str
+    name: str
+    role: ProjectRole
+    created_at: datetime
+
+
+class PendingInviteRead(BaseModel):
+    id: str
+    email: str
+    invited_by_user_id: str
+    expires_at: datetime
+    created_at: datetime
+
+
+class ProjectDetail(BaseModel):
+    id: str
+    name: str
+    role: ProjectRole
+    created_at: datetime
+    updated_at: datetime
+    members: list[ProjectMemberRead]
+    pending_invites: list[PendingInviteRead]
+
+
+class InviteCreateRequest(BaseModel):
+    email: str
+
+
+class InviteCreateResponse(BaseModel):
+    id: str
+    project_id: str
+    email: str
+    token: str  # raw; the caller uses this to build a copy-paste URL
+    accept_url: str
+    expires_at: datetime
+
+
+class InviteAcceptRequest(BaseModel):
+    token: str

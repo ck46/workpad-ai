@@ -43,6 +43,19 @@ from .core import (
 )
 from .chat_service import WorkpadChatService
 from .github_client import GitHubAuthError, GitHubClientError
+from .projects import (
+    InviteInvalid,
+    NotAMember,
+    NotOwner,
+    accept_invite,
+    create_invite,
+    create_project,
+    get_project_for_user,
+    list_members,
+    list_pending_invites,
+    list_projects_for_user,
+    require_owner,
+)
 from .schemas import (
     ArtifactUpdateRequest,
     ArtifactListItem,
@@ -54,10 +67,19 @@ from .schemas import (
     ConversationSummary,
     EditLastUserRequest,
     ExportFormat,
+    InviteAcceptRequest,
+    InviteCreateRequest,
+    InviteCreateResponse,
     LibraryArtifactCreateRequest,
     ModelInfo,
     PasswordResetConfirm,
     PasswordResetRequest,
+    PendingInviteRead,
+    ProjectCreateRequest,
+    ProjectDetail,
+    ProjectMemberRead,
+    ProjectRole,
+    ProjectSummary,
     RegenerateRequest,
     RenderedExportRequest,
     SignInRequest,
@@ -204,6 +226,137 @@ def auth_reset_confirm(payload: PasswordResetConfirm):
     if user is None:
         raise HTTPException(status_code=400, detail="invalid or expired reset token")
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# Projects
+# ---------------------------------------------------------------------------
+@app.post(f"{settings.api_prefix}/projects", response_model=ProjectSummary)
+def projects_create(payload: ProjectCreateRequest, user: CurrentUser):
+    with session_factory() as session:
+        try:
+            project = create_project(session, name=payload.name, owner=user)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return ProjectSummary(
+            id=project.id,
+            name=project.name,
+            role=ProjectRole.OWNER,
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+        )
+
+
+@app.get(f"{settings.api_prefix}/projects", response_model=list[ProjectSummary])
+def projects_list(user: CurrentUser):
+    with session_factory() as session:
+        rows = list_projects_for_user(session, user.id)
+        return [
+            ProjectSummary(
+                id=project.id,
+                name=project.name,
+                role=ProjectRole(role),
+                created_at=project.created_at,
+                updated_at=project.updated_at,
+            )
+            for project, role in rows
+        ]
+
+
+@app.get(f"{settings.api_prefix}/projects/{{project_id}}", response_model=ProjectDetail)
+def projects_detail(project_id: str, user: CurrentUser):
+    with session_factory() as session:
+        try:
+            project, role = get_project_for_user(session, project_id, user.id)
+        except NotAMember as exc:
+            raise HTTPException(status_code=403, detail="not a member of this project") from exc
+
+        members = [
+            ProjectMemberRead(
+                user_id=member_user.id,
+                email=member_user.email,
+                name=member_user.name,
+                role=ProjectRole(member.role),
+                created_at=member.created_at,
+            )
+            for member, member_user in list_members(session, project.id)
+        ]
+        invites = [
+            PendingInviteRead(
+                id=invite.id,
+                email=invite.email,
+                invited_by_user_id=invite.invited_by_user_id,
+                expires_at=invite.expires_at,
+                created_at=invite.created_at,
+            )
+            for invite in list_pending_invites(session, project.id)
+        ]
+        return ProjectDetail(
+            id=project.id,
+            name=project.name,
+            role=ProjectRole(role),
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+            members=members,
+            pending_invites=invites,
+        )
+
+
+@app.post(
+    f"{settings.api_prefix}/projects/{{project_id}}/invites",
+    response_model=InviteCreateResponse,
+)
+def projects_create_invite(
+    project_id: str,
+    payload: InviteCreateRequest,
+    user: CurrentUser,
+    request: Request,
+):
+    with session_factory() as session:
+        try:
+            project, _role = get_project_for_user(session, project_id, user.id)
+        except NotAMember as exc:
+            raise HTTPException(status_code=403, detail="not a member of this project") from exc
+        try:
+            require_owner(session, project.id, user.id)
+        except NotOwner as exc:
+            raise HTTPException(status_code=403, detail="only owners can invite") from exc
+        try:
+            record, raw_token = create_invite(
+                session, project=project, email=payload.email, invited_by=user
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        base = f"{request.url.scheme}://{request.url.netloc}"
+        accept_url = f"{base}/#/invite?token={raw_token}"
+        return InviteCreateResponse(
+            id=record.id,
+            project_id=record.project_id,
+            email=record.email,
+            token=raw_token,
+            accept_url=accept_url,
+            expires_at=record.expires_at,
+        )
+
+
+@app.post(f"{settings.api_prefix}/invites/accept", response_model=ProjectSummary)
+def invites_accept(payload: InviteAcceptRequest, user: CurrentUser):
+    token = (payload.token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token is required")
+    with session_factory() as session:
+        try:
+            project, member = accept_invite(session, token=token, user=user)
+        except InviteInvalid as exc:
+            raise HTTPException(status_code=400, detail="invalid or expired invite") from exc
+        return ProjectSummary(
+            id=project.id,
+            name=project.name,
+            role=ProjectRole(member.role),
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+        )
 
 
 @app.get(f"{settings.api_prefix}/settings/info")
