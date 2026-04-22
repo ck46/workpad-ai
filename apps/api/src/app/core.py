@@ -70,6 +70,10 @@ class Conversation(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     owner_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None, index=True)
+    # project_id is nullable at the schema level so the backfill migration
+    # can run against existing rows; service-layer code enforces that
+    # newly-created conversations always carry one.
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None, index=True)
     title: Mapped[str] = mapped_column(String(240), default="New workpad")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -96,6 +100,10 @@ class Artifact(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
+    # Denormalized from Conversation.project_id so library queries don't
+    # need a JOIN. Backfill keeps this in sync for existing rows; new pads
+    # inherit project_id from their conversation at create time.
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None, index=True)
     title: Mapped[str] = mapped_column(String(240))
     content: Mapped[str] = mapped_column(Text, default="")
     content_type: Mapped[str] = mapped_column(String(32), default=ContentType.MARKDOWN.value)
@@ -217,6 +225,11 @@ def _ensure_conversation_schema(engine) -> None:
             connection.exec_driver_sql(
                 "CREATE INDEX IF NOT EXISTS ix_conversations_owner_id ON conversations(owner_id)"
             )
+        if "project_id" not in columns:
+            connection.exec_driver_sql("ALTER TABLE conversations ADD COLUMN project_id VARCHAR(36)")
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_conversations_project_id ON conversations(project_id)"
+            )
 
 
 def _ensure_artifact_schema(engine) -> None:
@@ -239,6 +252,11 @@ def _ensure_artifact_schema(engine) -> None:
             connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN last_opened_at DATETIME")
         if "origin_conversation_id" not in columns:
             connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN origin_conversation_id VARCHAR(36)")
+        if "project_id" not in columns:
+            connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN project_id VARCHAR(36)")
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_artifacts_project_id ON artifacts(project_id)"
+            )
         connection.exec_driver_sql(
             "UPDATE artifacts SET artifact_type = spec_type "
             "WHERE artifact_type IS NULL AND spec_type IS NOT NULL"
