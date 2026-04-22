@@ -345,7 +345,7 @@ class RFCDrafter:
             get_conversation_or_404,
             utcnow,
         )
-        from .schemas import SpecType
+        from .schemas import ArtifactStatus, ArtifactType, SpecType
         from .transcripts import parse_transcript
 
         emit = on_event or (lambda _event: None)
@@ -401,10 +401,14 @@ class RFCDrafter:
 
             artifact = Artifact(
                 conversation_id=conversation.id,
+                origin_conversation_id=conversation.id,
                 title=pass2["title"][:240],
                 content=pass2["markdown_body"],
                 content_type="markdown",
                 spec_type=SpecType.RFC.value,
+                artifact_type=ArtifactType.RFC.value,
+                status=ArtifactStatus.DRAFT.value,
+                summary="",
                 version=1,
             )
             session.add(artifact)

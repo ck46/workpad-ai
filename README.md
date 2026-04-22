@@ -2,7 +2,7 @@
 
 Workpad AI is a split-pane chat and artifact workspace built around OpenAI GPT-5.4. The left side behaves like a modern chat app, while the right side is a durable work surface for drafts, code, and structured documents.
 
-For the product vision, see [docs/PRODUCT_VISION.md](./docs/PRODUCT_VISION.md). For the committed v1 scope, see [docs/V1_SPEC.md](./docs/V1_SPEC.md).
+For the product vision, see [docs/PRODUCT_VISION.md](./docs/PRODUCT_VISION.md). For the original RFC wedge, see [docs/V1_SPEC.md](./docs/V1_SPEC.md). For the current web multi-user direction and migration plan from the existing codebase, see [docs/WEB_MULTIUSER_SPEC.md](./docs/WEB_MULTIUSER_SPEC.md). For the prior single-user branch of the product thinking, see [docs/PERSONAL_MVP_SPEC.md](./docs/PERSONAL_MVP_SPEC.md).
 
 > **Security note.** This is a single-user, localhost-only tool. There is **no authentication or authorization** on any API endpoint — anyone who can reach the API can read, modify, or delete every conversation and artifact. Do **not** expose the backend to a public network, a shared host, or the open internet. Run it on `localhost` or behind a VPN/SSH tunnel you control.
 
