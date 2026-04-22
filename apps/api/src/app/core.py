@@ -189,10 +189,12 @@ def get_session_factory():
 
 
 def init_db() -> None:
-    # Import so the auth tables are registered on Base.metadata before
-    # create_all runs. Keeping the import here avoids a circular import at
-    # module load time (auth imports from core).
+    # Import so the auth and projects tables are registered on
+    # Base.metadata before create_all runs. Keeping these imports here
+    # avoids a circular import at module load time (both modules import
+    # from core).
     from . import auth as _auth  # noqa: F401
+    from . import projects as _projects  # noqa: F401
 
     engine = get_engine()
     Base.metadata.create_all(bind=engine)

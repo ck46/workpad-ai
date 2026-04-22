@@ -11,9 +11,11 @@ from sqlalchemy.pool import StaticPool
 from app import core
 from app.core import Base
 
-# Import side-effect: register auth models on Base.metadata so the in-memory
-# schema includes ``users`` and ``user_sessions`` tables.
+# Import side-effect: register auth + projects models on Base.metadata so the
+# in-memory schema includes users/user_sessions/password_reset_tokens plus
+# projects/project_members/project_invites.
 from app import auth  # noqa: F401
+from app import projects  # noqa: F401
 
 
 def _clear_cached(fn) -> None:
