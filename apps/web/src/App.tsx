@@ -344,6 +344,11 @@ type WorkbenchStore = {
   upsertProject: (project: ProjectSummary) => void;
   bootstrap: () => Promise<void>;
   startNewConversation: () => Promise<void>;
+  createPad: (payload: {
+    title: string;
+    artifact_type: "rfc" | "adr" | "design_note" | "run_note";
+    content?: string;
+  }) => Promise<void>;
   selectConversation: (conversationId: string) => Promise<void>;
   setShowArchived: (value: boolean) => void;
   archiveConversation: (conversationId: string) => Promise<void>;
@@ -779,6 +784,27 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       status: "idle",
       error: null,
     });
+  },
+
+  async createPad(payload) {
+    const projectId = get().currentProjectId;
+    if (!projectId) {
+      throw new Error("No project selected. Pick or create a project first.");
+    }
+    const artifact = await requestJson<Artifact>("/api/library/artifacts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: projectId,
+        title: payload.title,
+        content: payload.content ?? "",
+        content_type: "markdown",
+        artifact_type: payload.artifact_type,
+        status: "draft",
+      }),
+    });
+    // Select the backing conversation so the user lands on the new pad.
+    await get().selectConversation(artifact.conversation_id);
   },
 
   async selectConversation(conversationId: string) {
@@ -3899,10 +3925,12 @@ function ProjectSwitcher({
 
 function Sidebar({
   collapsed,
+  onOpenNewPad,
   onOpenNewProject,
   onOpenProjectSettings,
 }: {
   collapsed: boolean;
+  onOpenNewPad: () => void;
   onOpenNewProject: () => void;
   onOpenProjectSettings: () => void;
 }) {
@@ -3943,7 +3971,7 @@ function Sidebar({
       <aside className="hidden h-full w-14 flex-none flex-col items-center gap-3 border-r border-shell-border bg-shell-1 py-4 lg:flex">
         <button
           type="button"
-          onClick={() => void startNewConversation()}
+          onClick={onOpenNewPad}
           title="New pad"
           aria-label="New pad"
           className="flex h-8 w-8 items-center justify-center rounded-md bg-signal text-white transition hover:bg-signal-hover"
@@ -3970,7 +3998,7 @@ function Sidebar({
       />
       <button
         type="button"
-        onClick={() => void startNewConversation()}
+        onClick={onOpenNewPad}
         className="mb-3 flex w-full items-center justify-center gap-2 rounded-lg bg-signal px-3 py-2 text-[13px] font-medium text-white transition hover:bg-signal-hover"
       >
         <Plus size={14} />
@@ -4302,6 +4330,176 @@ function DraftProgress() {
         status={draftPhaseStatus("completed", draft.phase)}
       />
     </ul>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NewPadModal — create a pad of any of the four types directly (no AI
+// drafting, no transcript required). Covers the "blank pad" flow; the RFC-
+// with-transcript flow lives in NewSpecModal ("Draft with AI").
+// ---------------------------------------------------------------------------
+type PadType = "rfc" | "adr" | "design_note" | "run_note";
+
+const PAD_TYPE_OPTIONS: Array<{
+  id: PadType;
+  label: string;
+  description: string;
+}> = [
+  { id: "rfc", label: "RFC", description: "Propose a change. Argued against repo + discussion." },
+  { id: "adr", label: "ADR", description: "Record a decision and its context." },
+  { id: "design_note", label: "Design note", description: "Explore a design before it's a decision." },
+  { id: "run_note", label: "Run note", description: "Capture what happened in a session or incident." },
+];
+
+function NewPadModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const createPad = useWorkbenchStore((state) => state.createPad);
+  const currentProjectId = useWorkbenchStore((state) => state.currentProjectId);
+  const [padType, setPadType] = useState<PadType>("rfc");
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setTitle("");
+      setPadType("rfc");
+      setError(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !busy) onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, busy, onClose]);
+
+  if (!open) return null;
+
+  const canSubmit = title.trim().length > 0 && !busy && Boolean(currentProjectId);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const seedHeading = `# ${title.trim()}\n\n`;
+      await createPad({
+        title: title.trim(),
+        artifact_type: padType,
+        content: seedHeading,
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create the pad.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+      onClick={() => {
+        if (!busy) onClose();
+      }}
+    >
+      <div
+        className="w-full max-w-lg rounded-[20px] border border-shell-border bg-shell-1 p-6 shadow-panel"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="wp-overline mb-1.5">New pad</div>
+        <h2
+          className="m-0 font-serif text-[22px] font-medium text-ink-1"
+          style={{ letterSpacing: "-0.01em" }}
+        >
+          Pick a type.
+        </h2>
+        <p className="mt-2 text-[13px] text-ink-2">
+          Each type has its own surface and status model. Start blank and wire
+          sources in as you go, or use "Draft with AI" for a transcript-grounded
+          RFC.
+        </p>
+        <form onSubmit={submit} className="mt-5 flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {PAD_TYPE_OPTIONS.map((opt) => {
+              const active = padType === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setPadType(opt.id)}
+                  className={`rounded-lg border p-3 text-left transition ${
+                    active
+                      ? "border-signal bg-signal-soft"
+                      : "border-shell-border bg-shell-2 hover:border-shell-border-strong"
+                  }`}
+                  aria-pressed={active}
+                >
+                  <div
+                    className={`font-mono text-[10px] uppercase tracking-[0.14em] ${
+                      active ? "text-signal-soft-ink" : "text-ink-3"
+                    }`}
+                  >
+                    {opt.label}
+                  </div>
+                  <div
+                    className={`mt-1 text-[12.5px] ${
+                      active ? "text-signal-soft-ink" : "text-ink-2"
+                    }`}
+                  >
+                    {opt.description}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <label className="flex flex-col gap-1">
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+              Title
+            </span>
+            <input
+              autoFocus
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Rate limiting at the edge"
+              disabled={busy}
+              className="w-full rounded-md border border-shell-border-strong bg-shell-2 px-3 py-2.5 text-[14px] text-ink-1 outline-none transition placeholder:text-ink-3 focus:border-signal disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+          {error ? (
+            <div
+              className="rounded-md border border-state-missing-soft bg-state-missing-soft px-3 py-2 text-[12.5px] text-state-missing-ink"
+              role="alert"
+            >
+              {error}
+            </div>
+          ) : null}
+          <div className="mt-1 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="rounded-md border border-shell-border-strong bg-shell-1 px-3 py-2 text-[13px] font-medium text-ink-1 transition hover:bg-shell-2 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className="inline-flex items-center gap-2 rounded-md bg-signal px-3.5 py-2 text-[13px] font-medium text-white transition hover:bg-signal-hover disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy ? <LoaderCircle size={13} className="animate-spin" /> : null}
+              Create pad
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -5097,6 +5295,7 @@ function App() {
   const currentProjectId = useWorkbenchStore((state) => state.currentProjectId);
   const [canvasOnLeft] = useCanvasOnLeft();
   const [newSpecOpen, setNewSpecOpen] = useState(false);
+  const [newPadOpen, setNewPadOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
   const [sidebarCollapsed, toggleSidebarCollapsed] = useSidebarCollapsed();
@@ -5114,6 +5313,7 @@ function App() {
     <div className="flex h-screen overflow-hidden bg-shell-0">
       <Sidebar
         collapsed={sidebarCollapsed}
+        onOpenNewPad={() => setNewPadOpen(true)}
         onOpenNewProject={() => setNewProjectOpen(true)}
         onOpenProjectSettings={() => setProjectSettingsOpen(true)}
       />
@@ -5149,7 +5349,7 @@ function App() {
                       onOpen={(a: ArtifactListItem) => {
                         void selectConversation(a.conversation_id);
                       }}
-                      onNew={() => void startNewConversation()}
+                      onNew={() => setNewPadOpen(true)}
                       onDraftAI={() => setNewSpecOpen(true)}
                       onContinueLast={() => {
                         const latest = useWorkbenchStore
@@ -5249,6 +5449,7 @@ function App() {
         )}
       </main>
       <NewSpecModal open={newSpecOpen} onClose={() => setNewSpecOpen(false)} />
+      <NewPadModal open={newPadOpen} onClose={() => setNewPadOpen(false)} />
       <NewProjectModal
         open={newProjectOpen}
         onClose={() => setNewProjectOpen(false)}
