@@ -1,227 +1,504 @@
-# Workpad AI — v1 Spec (Wedge A+)
+# Workpad AI — v1 Spec (Consolidated)
 
-> Draft + live-resolving citations + drift badges. One user, one repo, one transcript, one spec type.
+> Living specs for small engineering teams (2–10) and serious individuals. Projects hold pads, threads, sources, and uploaded files. AI drafts, grounds, and searches across it all.
 
-See `docs/PRODUCT_VISION.md` for the long-horizon vision. This document intentionally narrows scope.
+**Supersedes:** the narrow wedge-A+ spec (previous `V1_SPEC.md`), `docs/archive/PERSONAL_MVP_SPEC.md`, and `docs/archive/WEB_MULTIUSER_SPEC.md`. Those remain readable in `docs/archive/` for historical context.
 
-## The 60-Second Demo
+**See also:** `docs/PRODUCT_VISION.md` for the long-horizon vision (CLI, MCP, connectors, coding-agent interop, etc. — all explicitly out of v1 scope).
 
-The success criterion for v1. If a staff engineer can watch this and ask "when can I have it?", v1 is done.
+---
 
-1. User starts a new RFC, pastes a meeting transcript, points at a GitHub repo.
-2. AI drafts the RFC. Inline citations appear as pills: `[src/auth.ts:42–58]`, `[#PR-234]`, `[commit abc1234]`, `[transcript:4:12–5:03]`.
-3. Hovering a repo citation previews the current code at that location.
-4. User closes the spec. Time passes. Code evolves.
-5. User reopens the spec. A top-of-document banner reads **"3 citations have drifted since you wrote this."**
-6. Stale citations show amber badges; clicking shows a before/after diff. Missing citations (path gone) show red.
+## What v1 Is
 
-That is the whole wedge. Everything else is v2.
+Workpad AI v1 is a hosted web app (also runnable locally) where a small engineering team — or one engineer — keeps durable technical pads (RFCs, ADRs, design notes, run notes) wired to the sources that justify them.
 
-## Scope — In
+The shape:
 
-- Artifact type: **RFC only** (one type).
-- Sources: **GitHub repo** (read-only) and **pasted transcript** (plain text). Nothing else.
-- AI capabilities: **draft** (from sources) and **verify** (re-resolve citations on demand).
-- Citation kinds: repo file/line range, repo PR, repo commit, transcript timestamp range.
-- Drift detection: on spec open, re-fetch repo citations; compare content hash; render status.
-- Existing features retained: TipTap markdown editing, Monaco (unused in v1 but stays in the codebase for later spec types), version history on the artifact, exports.
+- You sign in. You create or join a **project**. A project has members.
+- Inside a project, you have a **library** of pads, a set of **threads** (AI conversations scoped to the project), and a set of **sources** (repos attached via URL + PAT, pasted transcripts, notes, uploaded files, uploaded images).
+- You can draft a pad from sources, write one by hand, ask questions across the library, and see when citations drift from the current code.
+- Everything in a project is visible to every member of that project. No finer-grained permissions in v1.
 
-## Scope — Out (Punt List)
+The north star is unchanged: **opening Workpad for technical thinking should feel more natural than opening a blank doc or a blank chat.**
 
-Explicit non-goals for v1. Anything here requires a scope-change conversation, not a "while we're at it."
+## Design Principle — First Session Produces Value
 
-- Slack / Teams / Discord integration
-- Figma / Excalidraw / Mermaid / image upload
-- Meeting recording, note-taker plugins, A/V upload, transcription
-- Other spec types (ADR, PRD, post-mortem, runbook)
-- Spec library search, tagging, backlinks, cross-spec citations
-- Multi-user, sharing, comments, permissions
-- Notifications or scheduled re-verification (manual "Verify" only in v1)
-- Linear / Jira / GitHub Issues as first-class sources
-- Onboarding answer mode
-- Self-hosted deployment story
-- OAuth for GitHub (PAT only in v1)
-- Organization / workspace concept (single-user local app for v1)
-- Billing, accounts, auth of any kind
+v1 succeeds or fails on the first session. A new user should end their first five minutes inside a populated, useful project — not an empty shell that demands setup before delivering any value. Every flow that touches onboarding must reduce friction toward that outcome.
 
-## Data Model
+Concretely: the user arrives with one input (a pasted transcript, an uploaded doc, a dragged folder, or even a chat message describing what they're working on) and the product scaffolds a project around it — named, with the input attached as a source and a first pad drafted. Manual project setup exists but is not the default path.
 
-Extensions to the existing schema (`apps/api/src/app/core.py`). Existing `Conversation`, `Message`, `Artifact`, `ArtifactVersion` tables stay.
+This is not just a feature. It is the test for every UI decision: *does this step sit between the user and their first useful pad?* If yes, cut it.
 
-### `Artifact` — extend
+## What Is Already Shipped
 
-Add:
-- `spec_type: str` — enum-ish. v1: `"rfc"` only. Default `"rfc"` for new artifacts created via the v1 flow. Existing markdown artifacts stay as plain content; `spec_type` nullable.
+The narrow wedge (wedge A+ in `PRODUCT_VISION.md`) is built and passing tests. See `V1_BACKLOG.md` for the M0–M3 checklist. Summary:
 
-### `SpecSource` — new
+- GitHub repo + pasted transcript → drafted RFC with inline citation pills
+- Citation verification re-resolves repo citations and surfaces drift via status badges
+- Hover preview, stale-citation diff, export with citation footnotes
+- SQLite schema for `Pad`, `Citation`, `SpecSource`, `RepoCache`, `Conversation`, `Message`
 
-An immutable record of a source attached to a spec at draft time. Used later for re-resolution and provenance.
+This substrate is kept and extended. Nothing here is thrown away.
 
+## What v1 Adds
+
+Four layers on top of the shipped wedge.
+
+### 1. Auth + projects
+
+- Password auth (sign up, sign in, reset password; email verification optional).
+- **Project** as the top-level container. No workspace layer above it.
+- Roles: `owner` and `member`. That's it.
+- Invite by email, accept via signed link.
+- A single user can belong to multiple projects.
+
+### 2. Library + pad types
+
+- Library-first navigation inside a project.
+- Four pad types: `rfc`, `adr`, `design_note`, `run_note`.
+- Manual pad creation (blank document of any type).
+- AI drafting generalized across all four types.
+- Pad-to-pad references (`pad_ref` citation kind).
+
+### 3. Sources + search
+
+- Source kinds: `repo`, `transcript`, `note`, `file`, `image`.
+- File upload: markdown, text, PDFs, code files, folders (drag-drop or zip).
+- Image upload: screenshots, Figma exports, whiteboard photos, hand-drawn sketches. AI reads them via a vision model and extracts text via OCR.
+- Project-scoped search (keyword + semantic) over pads, transcripts, notes, extracted file text, citation excerpts.
+- Grounded ask: *"What did we decide about auth?"* returns an answer with citations back to the pads and source chunks that support it.
+
+### 4. One-input scaffolding
+
+- User arrives with a single piece of raw material: a pasted transcript, an uploaded PDF or doc, a dragged folder, or a chat message describing what they're working on.
+- System infers project name, likely pad type, and relevant additional sources (e.g. a repo URL mentioned in the transcript). Creates the project, attaches the input as a source, and drafts a first pad.
+- User lands inside a populated project. From there they invite teammates, attach more sources, or keep drafting.
+- Manual setup (create empty project → attach sources → draft) still exists but is the secondary path.
+
+## Explicit Non-Goals (Not in v1)
+
+Anything here requires an explicit scope change, not a "while we're at it." These are all listed in `PRODUCT_VISION.md` as future directions.
+
+- CLI client
+- MCP server (for Claude / Codex / Gemini / other clients)
+- OAuth cloud connectors: GitHub App, Google Drive, Slack, Figma, Linear, Jira, Discord, Notion, Confluence
+- Native Excalidraw drawing surface (live Mermaid still renders in markdown)
+- Speech input in chat
+- Audio / video upload + in-app transcription
+- Coding-agent export or plugins (Claude Code, Codex, Cursor)
+- Agents management / multi-agent orchestration
+- Polished landing page / marketing site (placeholder is fine until v1 is functional)
+- Self-hosted enterprise deployment story
+- SSO / SAML / SCIM
+- Billing / payments
+- Fine-grained permissions (per-pad ACL, viewer role, restricted visibility)
+- Comments, mentions, notifications, inbox
+- Scheduled background re-verification
+- Graph visualization of the pad graph
+- Cross-project retrieval
+- PM-style workflow (assignees, reviews, approvals)
+
+## Primary User Flows
+
+### A. First session: scaffold from one input (the default path)
+
+1. Sign up. (Email verification is optional and non-blocking.)
+2. Landing screen is a single dropzone / paste area with three affordances:
+   - paste text (transcript, notes, draft fragment, or "what are you working on?")
+   - upload a file or folder (PDF, doc, zip, image)
+   - paste a repo URL
+3. User provides any one of these. Clicks **Scaffold**.
+4. Backend runs a **scaffold pass**:
+   - infer project name from the input
+   - infer likely pad type (`rfc | adr | design_note | run_note`) from content cues
+   - detect any repo URLs referenced in the input; offer to attach if a PAT is available, skip cleanly if not
+   - attach the input as the first source
+   - draft a first pad (Phase 5+) or create a stub with a generated outline (Phase 2+)
+5. User lands inside a populated project with a draft pad open. Invite teammates as an optional next step, not a required one.
+
+### B. Start a new project manually
+
+1. Sign up or already signed in.
+2. Click **New project** (secondary affordance in the app shell).
+3. Name it, land on empty project home, attach sources and draft from there.
+
+### C. Draft a pad from sources
+
+1. From the library, click **New pad**.
+2. Pick type (RFC / ADR / design note / run note).
+3. Pick mode: *blank* or *draft from sources*.
+4. Attach sources: pick existing or attach new (repo URL, paste transcript, upload file, upload image).
+5. Optionally select prior pads as drafting context.
+6. Click **Draft**. Pad streams in with inline citations across all source kinds.
+
+### D. Write by hand
+
+1. New pad → blank → choose type → write.
+2. Attach sources at any point; AI can ground claims on request.
+
+### E. Ask across the project
+
+1. Open the Ask panel.
+2. Ask a question.
+3. Get a grounded answer with citations to pads and source chunks.
+4. Click citations to jump to the pad or the source excerpt.
+
+### F. Reopen a stale pad
+
+1. Open an old RFC.
+2. Drift banner: *"3 citations have drifted since draft at `sha[:7]`."*
+3. Click a stale pill → diff popover shows before/after.
+4. Edit or re-ground claims as needed.
+
+## Scaffolding Model
+
+The scaffold flow is a meta-capability that combines existing primitives (project creation, source attachment, pad drafting) into one action. No new subsystem; the magic lives in the UX and the inference step.
+
+**`POST /api/scaffold`** accepts:
+
+- `text` (optional) — pasted content
+- `file_ids` (optional) — IDs of files pre-uploaded via a separate upload endpoint
+- `repo_url` (optional) — repo reference
+- `hint` (optional) — user-provided nudge ("this is a postmortem", "RFC about caching")
+
+The handler:
+
+1. Picks the primary input. If multiple, combines them.
+2. Calls the model with a `scaffold` tool that outputs: `{ project_name, pad_type, pad_title, detected_repo_urls: [...], outline_sections: [...] }`.
+3. Creates the project, makes the caller the `owner`.
+4. Creates `Source` + `SourceSnapshot` rows for the input.
+5. If `pad_type` is inferred and the drafter is available, kicks off a draft stream. Otherwise creates a stub pad with the outline.
+6. Returns project + initial pad IDs, then streams the draft if one is in progress.
+
+**Progressive capability:**
+
+- Phase 2 ships stub-scaffolding: project + source + stub pad with an outline. No live drafting yet.
+- Phase 5 upgrades scaffolding to produce a real draft using the generalized drafter.
+- Incremental improvements (better title inference, repo auto-detection, pad-type detection) ship between those phases.
+
+The flow is designed so its minimum viable version lands in Phase 2 and its richest version lands by Phase 5, not all-at-once in one phase.
+
+## Project Model
+
+Top-level container. No workspace above it.
+
+**`Project`:**
 - `id`
-- `artifact_id` (FK → `Artifact`)
-- `kind`: `"transcript" | "repo"`
-- `payload`: JSON — shape depends on kind:
-  - `transcript`: `{ "text": "...", "hash": "...", "segments": [{ "start": "00:04:12", "end": "00:05:03", "text": "..." }] | null }` — `segments` is populated at draft time when timestamp markers (e.g. `HH:MM:SS` or `[HH:MM:SS]`) are detected in the paste; otherwise null, and `transcript_range` citations fall back to character-offset ranges inside `text`.
-  - `repo`: `{ "repo": "org/name", "ref_pinned": "sha_at_draft_time" }` — `ref_pinned` is the commit SHA at HEAD when the spec was drafted. All repo citations store claims *as of this SHA*; drift is computed by comparing current HEAD against it.
+- `name`
+- `created_by_user_id`
+- `created_at`, `updated_at`
+
+**`ProjectMember`:**
+- `id`, `project_id`, `user_id`
+- `role`: `owner | member`
 - `created_at`
 
-Existing untyped artifacts (created before v1) keep `spec_type = NULL`, have no `SpecSource` or `Citation` rows, and render as plain markdown with no citation UI. The new flow is purely additive — no migration, no breakage.
+**`Invite`:**
+- `id`, `project_id`, `email`, `token_hash`, `invited_by_user_id`
+- `accepted_at` nullable, `expires_at`, `created_at`
 
-### `Citation` — new
+If someone needs read-only access, they don't belong on the project yet. Don't build viewer/admin/restricted until the need is real.
 
-One row per inline citation in a spec.
+## Pad Model
 
+Pads are durable project objects.
+
+**`Pad`:**
 - `id`
-- `artifact_id` (FK → `Artifact`)
-- `anchor`: stable string ID — emitted by the model, used to locate the citation in the markdown source (e.g. `[[cite:a3f9]]`)
-- `kind`: `"repo_range" | "repo_pr" | "repo_commit" | "transcript_range"`
-- `target`: JSON — shape depends on kind:
-  - `repo_range`: `{ "repo": "...", "ref_at_draft": "sha", "path": "...", "line_start": 42, "line_end": 58, "content_hash_at_draft": "..." }`
-  - `repo_pr`: `{ "repo": "...", "number": 234, "title_at_draft": "..." }`
-  - `repo_commit`: `{ "repo": "...", "sha": "..." }`
-  - `transcript_range`: `{ "source_id": "...", "start": "00:04:12", "end": "00:05:03" }`
-- `resolved_state`: `"live" | "stale" | "missing" | "unknown"`
-- `last_checked_at`
-- `last_observed`: JSON — e.g. current content hash and current line range after re-resolution
+- `project_id`
+- `pad_type`: `rfc | adr | design_note | run_note`
+- `title`
+- `content_markdown`
+- `content_type`: `markdown | code` (code for the Monaco path; unused in the default flow)
+- `summary`
+- `status`: `draft | active | archived`
+- `owner_user_id`
+- `created_by_user_id`
+- `created_at`, `updated_at`, `last_opened_at`
+- `version` (for optimistic concurrency)
 
-## User Flows
+Visibility: every project member sees every pad. No `visibility` column yet.
 
-### Author flow
+`PadVersion` already exists — keep the one-row-per-revision model.
 
-1. User clicks **New RFC**.
-2. Modal: textarea for transcript, dropdown for GitHub repo (or "+ Connect repo" entering a repo URL + PAT).
-3. On **Draft**:
-   - Backend stores a `SpecSource` row for the transcript.
-   - Backend fetches a lightweight repo snapshot: tree (paths only), last 20 PRs (titles + numbers), recent commit SHAs (to define `ref_at_draft`). Stores a `SpecSource` row for the repo with `ref_at_draft = HEAD sha`.
-   - Backend calls the model with a new tool `draft_rfc` whose schema produces `{ title, markdown_body, citations: [...] }`. The markdown body contains `[[cite:<anchor>]]` tokens; `citations` is the list with full target data keyed by anchor.
-   - On completion, backend creates the `Artifact` (markdown content with citation tokens inline), writes all `Citation` rows, and streams the result to the client.
-4. Artifact opens in the workpad. TipTap renders citation tokens as pills with live data.
+## Source Model
 
-### Reread flow
+Sources are normalized and project-scoped.
 
-1. User opens an existing spec.
-2. Client requests the spec; server returns artifact + citations with their last resolved state.
-3. Client calls `POST /api/artifacts/{id}/verify-citations` (lazy, on first open OR manual button).
-4. Server iterates citations and compares *pinned SHA* (from `target.ref_at_draft`) against *current HEAD*, using the `repo_cache` table to avoid duplicate fetches:
-   - For `repo_range`: fetch the file at current HEAD; compute the hash of the pinned line range; if it matches `content_hash_at_draft` → `live`. If the file exists but the quoted content has moved or changed → `stale`; write observed hash + any discovered new line range to `last_observed`. If the path is gone at HEAD → `missing`.
-   - For `repo_pr`: fetch PR; `live` unless deleted; changes in open/merged/closed state are surfaced but do not mark stale.
-   - For `repo_commit`: verify SHA still resolves at HEAD's history; `live` or `missing`.
-   - For `transcript_range`: always `live` — transcripts are frozen at draft.
-5. Server returns updated states; client paints badges and a top-of-spec summary ("N citations have drifted since draft at `sha[:7]`").
+### `Source`
 
-### Manual edit flow
+- `id`, `project_id`
+- `kind`: `repo | transcript | note | file | image`
+- `title`
+- `provider`: e.g. `github`, `upload`
+- `canonical_key` (for dedupe: repo slug, file hash, etc.)
+- `provenance_json` (kind-specific metadata)
+- `created_by_user_id`
+- `created_at`, `updated_at`
 
-User can still edit markdown directly. Citation tokens are preserved as immutable marks in TipTap (cannot be partially edited, only removed wholesale). A future feature will let users add citations manually via a "+" in the toolbar; not in v1.
+### `SourceSnapshot`
 
-## Technical Shape
+Pinned content of a source at a moment in time.
 
-### Backend (FastAPI)
+- `id`, `source_id`
+- `snapshot_ref` (commit SHA, file hash, transcript hash)
+- `content_text` (extracted text for files/PDFs/images; empty for repos — live fetched)
+- `content_hash`
+- `metadata_json`
+- `created_at`
 
-New / extended:
-- `db`: add `spec_type` column to `artifacts`; new `spec_sources`, `citations`, and `repo_cache` tables via SQLAlchemy migration.
-- `github_client.py`: thin wrapper over `httpx` to call GitHub REST + GraphQL. No PyGithub (too heavy). Sends conditional requests (`If-None-Match` with stored ETag) to conserve the 5K/hr budget.
-- `repo_cache`: SQLite table keyed by `(repo, ref, path)` storing `content BLOB, content_hash, etag, fetched_at`. Populated by `github_client` reads; consulted on every subsequent read of the same `(repo, ref, path)`. Shared between draft and verify passes. Entries expire after 24h or on explicit invalidation.
-- `rfc_drafter.py`: runs the two-pass draft flow (see AI Integration), persists sources and citations.
-- `citation_verifier.py`: batch verification for a spec; caps at 50 citations per pass with a graceful "truncated" response for larger specs.
-- Routes:
-  - `POST /api/specs/draft` — body: `{ transcript, repo_url, repo_token_ref }`. Streams SSE; creates artifact + sources + citations.
-  - `POST /api/artifacts/{id}/verify-citations` — returns updated citation states.
-  - `GET /api/artifacts/{id}` — existing; now also returns citations.
-- Settings: add `GITHUB_DEFAULT_TOKEN` env var for v1 single-user use. (Later: per-repo tokens in DB.)
+### `PadSourceLink`
 
-### Frontend (React + TipTap)
+Join between pads and sources.
 
-New / extended:
-- Citation TipTap node: custom extension that renders `[[cite:<anchor>]]` tokens as a pill with status badge. Non-editable internals; click → popover with source preview.
-- New-spec modal: transcript textarea + repo picker (URL + optional PAT stored server-side).
-- Drift banner component at the top of the workpad when the current artifact has citations with `resolved_state != "live"`.
-- Citation popover: shows the current code (fetched on hover) and, for stale citations, a minimal diff.
-- "Verify citations" toolbar button (glass-button style, next to Copy / Download).
+- `id`, `pad_id`, `source_id`, `source_snapshot_id`
+- `role`: `primary | context | cited | derived_from`
+- `added_by_user_id` nullable
+- `added_by_system`
+- `created_at`
 
-### AI Integration
+### Transitional: `SpecSource`
 
-- New tool `draft_rfc` replaces `canvas_apply` for the v1 flow. Strict schema:
-  ```
-  { title: string,
-    markdown_body: string,  // contains [[cite:<anchor>]] tokens
-    citations: [
-      { anchor: string,
-        kind: "repo_range" | "repo_pr" | "repo_commit" | "transcript_range",
-        target: {...}        // shape per kind
-      }
-    ]
-  }
-  ```
-- **Two-pass drafting.**
-  - **Pass 1 (file selection).** Send the model a cheap repo *index* — file tree (paths only), top-level directory summaries, README contents, `package.json` / `pyproject.toml` / equivalent manifest — along with the full transcript. Ask it via a `pick_relevant_files` tool to return up to ~15 file paths it believes are relevant to drafting the RFC, plus a short reasoning string. Model handles domain jargon that grep-by-identifier heuristics miss.
-  - **Pass 2 (draft).** Fetch the selected files in full (via `repo_cache`), plus recent PR titles and commit summaries. Call the model with `draft_rfc` to produce the final RFC with citations pointing only into material the model actually saw.
-- Server-side validation: every citation's `target` is checked against the repo snapshot before persisting. Invalid citations (non-existent paths, line ranges past EOF) are silently dropped and logged for prompt iteration.
-- `canvas_apply` tool remains for non-v1 flows (existing markdown artifacts still editable).
+The existing `SpecSource` table stays through Phase 2; Phase 3 backfills to `Source` / `SourceSnapshot` and freezes `SpecSource`. Do not try to mutate it in place.
 
-## Decisions Locked for v1
+### File and image handling
 
-Decisions made 2026-04-17, folded into the sections above for reference:
+- Files stored on disk (local) or object storage (hosted); metadata lives in `Source`.
+- Text extraction happens at upload time:
+  - `.md`, `.txt`, code files → read directly
+  - `.pdf` → `pdftotext` (not layout-aware parsers — scope trap)
+  - `.docx` → `python-docx`
+  - images → vision model for description + OCR
+- Extracted text lands in `SourceSnapshot.content_text` and gets chunked for search.
+- Folder upload: zip on the client; server unzips and creates one `Source` per file with a shared parent identifier in `provenance_json`.
+- Image size cap: 20 MB. File size cap: 50 MB. Folder zip cap: 200 MB. Adjust from feedback.
 
-1. **Ref strategy.** Pin citations to the commit SHA at draft time; drift is computed by comparing the pinned SHA against current HEAD.
-2. **File selection.** Two-pass drafting — model picks relevant files from a cheap repo index in pass 1, then drafts with full contents in pass 2.
-3. **Rate limits.** SQLite `repo_cache` table keyed by `(repo, ref, path)` with ETags for conditional requests. Cap v1 verify at 50 citations per pass.
-4. **Citation syntax.** `[[cite:<anchor>]]` tokens in stored markdown; TipTap renders them as non-editable inline pills; exports render them as markdown footnotes with source links.
-5. **Transcripts.** Stored as a blob. Timestamp markers (`HH:MM:SS` style) parsed into segments at draft time when present; character-offset ranges used as fallback.
-6. **Existing artifacts.** Additive-only. Untyped artifacts keep `spec_type = NULL`, no migration, no citation UI.
+## Citation Model
 
-## Milestones
+Extend the existing `Citation` table additively.
 
-Rough sizing, assuming solo / evenings-and-weekends pace.
+**Kinds:**
 
-### M0 — Schema + GitHub client (≈ 1 week)
-- Add `spec_type` to `artifacts`; add `spec_sources`, `citations`.
-- `github_client.py`: get tree, get file (raw), get PR, get commit, search code.
-- Env-var-based PAT.
-- Unit tests for the client.
-- **Exit criterion:** from a Python REPL, can fetch a file + compute a content hash for a range.
+- `repo_range`, `repo_pr`, `repo_commit` (existing)
+- `transcript_range` (existing)
+- `note_range` (new)
+- `file_range` (new — line range in a source file, or page range in a PDF)
+- `image_region` (new — optional bounding box; nullable → whole-image reference)
+- `pad_ref` (new — reference to another pad)
 
-### M1 — Draft flow (≈ 2 weeks)
-- `rfc_drafter.py` + `draft_rfc` tool schema.
-- `POST /api/specs/draft` SSE endpoint.
-- New-spec modal in the frontend.
-- Citation TipTap node (render only; no interactions yet).
-- **Exit criterion:** paste transcript + repo URL → RFC with citation pills appears in the workpad.
+**New columns:**
 
-### M2 — Verify / drift (≈ 1 week)
-- `citation_verifier.py`.
-- `POST /api/artifacts/{id}/verify-citations`.
-- Badges on citations; drift banner.
-- Auto-verify on open; manual "Verify" button.
-- **Exit criterion:** editing the repo (moving a function) and reopening the spec produces a stale badge + diff.
+- `source_snapshot_id` nullable
+- `excerpt_text_at_capture` nullable
 
-### M3 — Polish (≈ 1 week)
-- Hover preview on citations (fetch on demand, cache for session).
-- Stale-citation diff view.
-- Export preserves citations as markdown footnotes with source links.
-- Error states (repo unreachable, PAT expired, file 404).
-- **Exit criterion:** the 60-second demo runs end to end without surprises.
+Existing repo-drift logic continues to operate on `repo_*` kinds. Other kinds are `live` by definition in v1 (transcripts, notes, files, images, pads are frozen at capture). Drift for non-repo sources is a post-v1 concern.
 
-**Total:** ~5 weeks of focused work. Add buffer; realistically 6–8.
+## Retrieval Model
 
-## Dependencies to Add
+Project-scoped. No cross-project retrieval in v1.
 
-- Backend: `httpx` (probably already transitively via FastAPI), `githubkit` (optional; nice typed client).
-- Frontend: `@tiptap/core` extensions — a custom node implementation (no new dep).
+### What gets indexed in v1
+
+- Pad titles, summaries, body chunks (by heading/section)
+- Transcript segments
+- Note paragraphs
+- Extracted file text chunks (paragraph or page)
+- Image descriptions + OCR text
+- Citation excerpts
+- Pad type, tags
+
+### What does NOT get indexed in v1
+
+- Full semantic index of every repo file. Repo stays citation-referenced with live file reads; we cite and fetch, we don't index.
+
+### Pipeline
+
+1. Keyword search via SQLite FTS5 over titles / summaries / chunk text.
+2. Semantic retrieval over chunk embeddings.
+3. Merge, dedupe, re-rank (pad type, recency, explicit links, shared sources).
+4. Grounded answer generation with citations to pad chunks + source snapshots.
+
+Hybrid from day one. Not semantic-only.
+
+## AI Capabilities
+
+### A. Draft pad (generalized)
+
+Replace the RFC-only drafter with a generalized drafter:
+
+- **Inputs:** pad type, selected sources (any mix of kinds), selected prior pads, template
+- **Outputs:** pad body, citations, summary, explicit `pad_ref` links for derived drafts
+- Keep the two-pass flow for repo sources (file selection, then draft)
+
+### B. Continue pad
+
+On an open pad:
+
+- expand a section
+- rewrite for clarity
+- ground a paragraph against current sources
+- compare against repo state
+- extract decisions
+
+### C. Ask across project
+
+- query → grounded answer with citations
+- optional scope filter by pad type, source, tag
+
+### D. Suggest related pads
+
+When viewing or drafting, show related pads ranked by:
+
+1. explicit pad links
+2. shared sources
+3. shared tags
+4. semantic similarity
+
+### E. Drift and verification (already shipped for repos)
+
+- Stays repo-only in v1.
+- Generalizes to other sources in a post-v1 phase.
+
+## Auth Model
+
+Password-based. OAuth / SSO is vision.
+
+**`User`:** `id`, `email`, `password_hash`, `email_verified_at`, `created_at`
+
+**`Session`:** `id`, `user_id`, `token_hash`, `expires_at`, `created_at`
+
+**`PasswordResetToken`:** `id`, `user_id`, `token_hash`, `expires_at`, `used_at`
+
+Session-aware routes; signed-out users land on sign-in/sign-up.
+
+## API Direction
+
+Keep existing endpoints during migration; add project-scoped endpoints.
+
+**New:**
+
+- `POST /api/auth/sign-up`, `/api/auth/sign-in`, `/api/auth/sign-out`, `/api/auth/reset`
+- `POST /api/scaffold` — the one-input onboarding endpoint; creates a project, attaches a source, drafts a first pad (or creates a stub). SSE-streamed.
+- `GET /api/projects`, `POST /api/projects`, `GET /api/projects/{id}`
+- `POST /api/projects/{id}/invites`, `POST /api/invites/accept`
+- `GET /api/projects/{id}/pads`, `POST /api/projects/{id}/pads`
+- `GET /api/pads/{id}`, `PUT /api/pads/{id}` (existing; gain project scoping via pad → project link)
+- `POST /api/projects/{id}/sources` (multipart for file/image upload)
+- `POST /api/uploads` — pre-upload for scaffold and source flows; returns file IDs to reference
+- `POST /api/projects/{id}/search`, `POST /api/projects/{id}/ask`
+- `GET /api/pads/{id}/related`
+
+**Kept as-is (scoped through the pad):**
+
+- `POST /api/specs/draft` — stays for now; folds into the generalized drafter endpoint during Phase 5
+- `POST /api/pads/{id}/verify-citations`
+- `GET /api/citations/{id}/preview`, `GET /api/citations/{id}/diff`
+
+## UI Direction
+
+Authenticated app shell:
+
+- Project switcher (top-left)
+- Primary nav: **Library**, **Threads**, **Ask**, **Sources**, **Members**
+- Account menu (profile, sign out, settings)
+- "New pad" primary CTA
+
+**Public routes:** minimal landing placeholder, sign-in, sign-up, reset password, accept invite.
+
+The single-file `App.tsx` monolith breaks up during this pass — routing + auth shell is the forcing function. Target structure:
+
+- `src/routes/` — auth, project home, library, pad, ask, members
+- `src/components/library/`
+- `src/components/pad/`
+- `src/components/sources/`
+- `src/components/ask/`
+- `src/store/` — project, pads, auth
+
+## Build Order
+
+Six phases. Do not start the next until the previous exits.
+
+### Phase 1 — Auth + projects (≈ 2 weeks)
+
+- `User`, `Session`, `PasswordResetToken` tables
+- `Project`, `ProjectMember`, `Invite` tables
+- `/api/auth/*`, `/api/projects/*`, invite flow
+- Authenticated app shell: sign-in, sign-up, project switcher, empty project home
+
+**Exit:** a user can sign up, create a project, invite a teammate, and land on project home.
+
+### Phase 2 — Pads under projects + stub scaffold (≈ 2 weeks)
+
+- Migrate existing pads: add `project_id`, `pad_type`, `status`, `summary`, `last_opened_at`; backfill a default project owned by the first user.
+- Rename `SpecType` → `pad_type`; backfill existing RFCs.
+- Library view: list, filter by type / status / owner, open pads directly.
+- Manual pad creation for all four types.
+- "New RFC" → "New pad" with type picker.
+- **Stub scaffold:** `POST /api/scaffold` lands in its minimum form — creates a project, attaches a text input as a source, creates a stub pad with an inferred title + outline. No live drafting yet.
+
+**Exit:** pads are clearly shared project objects, openable without opening a thread. A signed-in user can paste text into the scaffold dropzone and land inside a named project with an outlined stub pad.
+
+### Phase 3 — Sources + file/image upload (≈ 2 weeks)
+
+- `Source`, `SourceSnapshot`, `PadSourceLink` tables
+- File upload endpoint + storage (disk locally, S3-compatible when hosted)
+- Image upload with vision description + OCR
+- Backfill `SpecSource` → `Source` / `SourceSnapshot`
+- Citation kinds: `note_range`, `file_range`, `image_region`, `pad_ref`
+
+**Exit:** user can attach a PDF, an image, or a folder to a project and use it as a citable source.
+
+### Phase 4 — Search + ask (≈ 2 weeks)
+
+- `SearchChunk`, `SearchEmbedding` tables
+- Chunkers for pads, transcripts, notes, extracted file text
+- FTS5 + semantic retrieval; hybrid re-ranking
+- `/api/projects/{id}/search`, `/api/projects/{id}/ask`
+- UI: search box in library, Ask panel
+
+**Exit:** *"What did we decide about auth?"* returns a grounded answer with citations that jump to real pads and source excerpts.
+
+### Phase 5 — Generalized drafting + rich scaffold (≈ 1–2 weeks)
+
+- Drafter accepts any pad type, any mix of source kinds, selected prior pads.
+- `pad_ref` citations written for derived drafts.
+- `/api/specs/draft` folds into `/api/projects/{id}/pads/draft`.
+- **Scaffold upgrade:** the scaffold flow now produces a live-drafted first pad (not just a stub) using the generalized drafter. Detects repo URLs in the input and offers to attach when a PAT is configured.
+
+**Exit:** an ADR drafted from a PR + transcript + a prior RFC is materially better than the same draft without the prior RFC. A first-time user pastes a transcript into the scaffold dropzone and lands on a real drafted pad with citations.
+
+### Phase 6 — Related pads + polish (≈ 1 week)
+
+- `/api/pads/{id}/related` with hybrid ranking
+- Drift surfacing in library filters
+- Interaction polish (not marketing polish — that's post-v1)
+
+**Exit:** v1 feels coherent end-to-end. Ready to put in front of external users.
+
+**Total:** ~10–11 weeks focused; realistic 14–18.
+
+## Migration Strategy
+
+- All schema changes are additive. No destructive migrations.
+- Existing single-user data becomes a default "personal" project, owned by the first user who signs in (or by a configured seed user during Phase 1 cutover).
+- `SpecSource` stays in place through Phases 1–2; Phase 3 backfills to the new tables and freezes `SpecSource`.
+- `Conversation` / `Message` stay; conversations become threads attached to a project and optionally to a pad.
 
 ## Risks
 
-- **Draft quality.** If the RFC draft is not noticeably better than "paste transcript + repo README into Claude," the wedge fails. Mitigation: invest in prompt quality and the relevant-file selection heuristic early.
-- **Citation hallucination.** The model may invent paths or line numbers. Mitigation: validate every citation server-side against the repo snapshot; silently drop invalid ones before storing (and log them for prompt iteration).
-- **GitHub rate limits on larger repos.** Mitigation: cache aggressively; in v1, cap at 50 citations per verify pass with a graceful message.
-- **The demo reads as "neat" but not "need."** Biggest product risk. Mitigation: before M2, walk through the flow with 2–3 staff engineers we have access to; if no pull, reconsider before M3 polish.
+1. **Auth + projects before the memory loop is proven.** Mitigation: Phase 4 (search + ask) is where real value lands. Keep Phases 1–2 functional, not polished.
+2. **"Multi-user" slides into enterprise-platform creep.** Mitigation: the non-goals list is hard. Reject "we also need" without a scope decision.
+3. **File / image upload pipeline becomes a tar pit.** Mitigation: text-only extraction in v1; images get vision + OCR, nothing fancier; PDFs use `pdftotext`, not layout-aware parsers.
+4. **Search quality is mediocre at first.** Mitigation: hybrid keyword + semantic from day one; don't ship semantic-only.
+5. **The frontend monolith resists splitting.** Mitigation: routing + auth shell forces a real component tree. Stop patching `App.tsx`.
+6. **Citation-across-many-source-kinds balloons model prompt size.** Mitigation: keep the two-pass file-selection pattern for repos; cap non-repo source attachments per draft (e.g. 5 files + 5 images).
 
-## What Comes Next (v1.5+, not part of this spec)
+## Success Criteria
 
-For context only; implementing any of these is out of scope for v1.
+- A first-time user can paste a transcript or upload a doc and, within 60 seconds, be inside a populated project with a drafted pad — no manual setup in between.
+- A two-person team can sign up, create a project, attach a repo + a transcript + a PDF, draft an RFC, search the library, and get a grounded answer to a cross-pad question.
+- A single user can use the same app with no sense of it being "for teams only."
+- The existing RFC drafting + drift work still functions through the migration.
+- Opening Workpad feels more natural than opening a blank doc or a blank chat for technical thinking.
 
-- ADR type (tighter structure: context / options / decision / consequences).
-- Scheduled re-verification + weekly drift digest.
-- Slack integration for permalink citations.
-- Image / diagram upload with vision.
-- Spec library search and cross-spec backlinks.
-- Meeting transcript imports from note-taker webhooks.
+The strongest behavioral test: when a teammate recovers reasoning about a past decision faster than they would by grepping code + slack + old docs, v1 is working. The strongest adoption test: a user who drops in with zero intent leaves their first session with a real pad they want to come back to.
