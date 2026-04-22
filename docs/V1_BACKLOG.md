@@ -58,18 +58,20 @@ Broken into substeps 1A–1F that can be landed and tested independently. Items 
 
 ### 1E — Frontend auth pages wired to backend
 
-The marketing + signin/signup/forgot UI already exists in `apps/web/src/components/PublicPages.tsx` (hash routing) with `apps/web/src/lib/auth.ts` helpers. This substep wires the UI to the real backend and adds the missing flows.
+The marketing + signin/signup/forgot UI already existed in `apps/web/src/components/PublicPages.tsx` (hash routing) with `apps/web/src/lib/auth.ts` helpers. This substep wired the remaining flows.
 
-- [ ] Wire signin form → `signIn()`; on success route to `#/` (library).
-- [ ] Wire signup form → `signUp()`; on success route to `#/` and open the new-project / scaffold onboarding.
-- [ ] Wire forgot-password form → `POST /api/auth/reset-request`; show neutral "check your email (or console in dev)" confirmation regardless of outcome.
-- [ ] Add reset-confirm page at `#/reset?token=…` → `POST /api/auth/reset-confirm`.
-- [ ] Add invite-accept page at `#/invite?token=…` → signed-in? accept; signed-out? signin-then-accept.
-- [ ] Session bootstrap: on app mount, `fetchCurrentUser()`; if 401 and route is not public, redirect to `#/signin`.
-- [ ] Account menu in header: name/email + sign-out button (calls `signOut()`, clears client state, routes to `#/`).
-- [ ] Keep all form submissions in-place (no page reloads); surface server errors inline (already-taken email, weak password, bad credentials, expired token).
+- [x] Signin form wired to `signIn()` (pre-existing from `f2844f2`).
+- [x] Signup form wired to `signUp()` (pre-existing).
+- [x] Forgot-password form wired to `POST /api/auth/reset-request` with a neutral confirmation screen that matches the backend's 202-on-unknown behavior. Submitting state + inline error slot. *Commit `72a5f1d`.*
+- [x] Reset-confirm page at `#/reset?token=...` → `POST /api/auth/reset-confirm`. Three states (missing token / form / success); matching-password + ≥8-chars validation; router extended to parse `#/<slug>?token=...`. *Commit `e9024de`.*
+- [x] Invite-accept page at `#/invite?token=...`. Four states (missing token / anonymous / signed-in prompt / accepted). Calls `acceptInvite()` and routes to the new project on success. *Commit `339e5ae`.*
+- [x] Anonymous-visitor invite round-trip: clicking "Sign in" or "Create an account" on `#/invite` stashes the token in sessionStorage; after auth the user is bounced back to `#/invite?token=...` instead of `#/app`. *Commit `3fa93f0`.*
+- [x] Session bootstrap: `main.tsx::Root` calls `fetchCurrentUser()` on mount, renders a neutral loading shell while auth resolves, routes unauthenticated callers to the marketing page. (Pre-existing.)
+- [x] Account menu in sidebar: initials avatar opens a popover with "Signed in as <email>", appearance toggle (light/dark/auto), and Sign out → calls `signOut()` and routes back to `#/marketing`. (Pre-existing from the reskin.)
+- [x] API helpers added in `lib/auth.ts`: `requestPasswordReset`, `confirmPasswordReset`, `acceptInvite`, `stashPendingInvite`, `takePendingInvite`. *Commit `a25cea6`, extended in `3fa93f0`.*
+- [x] Server errors surface via the existing `ErrorBanner` component (bad credentials, duplicate email, invalid token, short password, etc.).
 
-**Exit:** In a fresh browser profile, a user can sign up, sign out, sign back in, forget their password, reset it from the logged URL, and sign in with the new password — all without touching the URL bar.
+**Exit met:** A fresh browser profile can complete every flow without touching the URL bar — sign up, sign out, sign back in, forget password, reset via the dev-logged URL, sign in with the new password, accept an invite from `#/invite?token=...`. `yarn build` typechecks and bundles green.
 
 ### 1F — Project switcher + project home
 
