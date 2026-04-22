@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { MarketingPage, AuthPage } from "./components/PublicPages";
+import {
+  AuthPage,
+  MarketingPage,
+  ResetConfirmPage,
+} from "./components/PublicPages";
 import {
   AuthContext,
   fetchCurrentUser,
@@ -14,22 +18,38 @@ import "./index.css";
 // Run before React mounts so the dark theme applies on first paint.
 initSystemTheme();
 
-// Public routes (marketing, auth) are presentational. The hash-based router
-// keeps them dependency-free: #/marketing, #/signin, #/signup, #/forgot.
+// Public routes are hash-based: #/marketing, #/signin, #/signup, #/forgot,
+// #/reset?token=..., #/invite?token=... — kept dependency-free (no router lib).
 // Anything else falls through to the authenticated app.
-type Route = "marketing" | "signin" | "signup" | "forgot" | "app";
+type Route =
+  | "marketing"
+  | "signin"
+  | "signup"
+  | "forgot"
+  | "reset"
+  | "invite"
+  | "app";
 
-function readRoute(): Route {
-  const hash = window.location.hash.replace(/^#\/?/, "").toLowerCase();
-  if (hash === "marketing") return "marketing";
-  if (hash === "signin" || hash === "login") return "signin";
-  if (hash === "signup" || hash === "register") return "signup";
-  if (hash === "forgot") return "forgot";
-  return "app";
+type ParsedRoute = { route: Route; token: string | null };
+
+function readRoute(): ParsedRoute {
+  const raw = window.location.hash.replace(/^#\/?/, "");
+  const [path, query = ""] = raw.split("?", 2);
+  const token = new URLSearchParams(query).get("token");
+  const slug = path.toLowerCase();
+  if (slug === "marketing") return { route: "marketing", token: null };
+  if (slug === "signin" || slug === "login") return { route: "signin", token: null };
+  if (slug === "signup" || slug === "register") return { route: "signup", token: null };
+  if (slug === "forgot") return { route: "forgot", token: null };
+  if (slug === "reset") return { route: "reset", token };
+  if (slug === "invite") return { route: "invite", token };
+  return { route: "app", token: null };
 }
 
 function Root() {
-  const [route, setRoute] = useState<Route>(readRoute);
+  const [parsed, setParsed] = useState<ParsedRoute>(readRoute);
+  const route = parsed.route;
+  const token = parsed.token;
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
 
@@ -54,7 +74,7 @@ function Root() {
 
   useEffect(() => {
     function onHash() {
-      setRoute(readRoute());
+      setParsed(readRoute());
     }
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -70,13 +90,13 @@ function Root() {
           window.location.pathname + window.location.search,
         );
       }
-      setRoute("app");
+      setParsed({ route: "app", token: null });
       return;
     }
     if (window.location.hash !== target) {
       window.location.hash = target;
     } else {
-      setRoute(next);
+      setParsed({ route: next, token: null });
     }
   }, []);
 
@@ -127,6 +147,17 @@ function Root() {
           nav={nav}
           onAuthenticated={(u) => setUser(u)}
         />
+      </AuthContext.Provider>
+    );
+  }
+
+  // Reset-confirm is a deep-link from the reset email (or the dev log).
+  // It works whether or not the user is currently signed in — finishing a
+  // reset revokes all sessions, so the user ends up signed out regardless.
+  if (route === "reset") {
+    return (
+      <AuthContext.Provider value={{ user, setUser, signOut }}>
+        <ResetConfirmPage token={token} nav={nav} />
       </AuthContext.Provider>
     );
   }

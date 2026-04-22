@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, Github, LoaderCircle } from "lucide-react";
 import {
+  confirmPasswordReset,
   requestPasswordReset,
   signIn,
   signUp,
@@ -562,6 +563,186 @@ export function AuthPage({
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Reset-confirm page — reached via #/reset?token=... from the email/log
+// ---------------------------------------------------------------------------
+export function ResetConfirmPage({
+  token,
+  nav,
+}: {
+  token: string | null;
+  nav: (route: "signin" | "marketing" | "app" | "forgot") => void;
+}) {
+  return (
+    <div className="grid min-h-screen bg-shell-0 md:grid-cols-2">
+      <div className="flex min-h-screen flex-col px-8 py-8 sm:px-12">
+        <a
+          href="#/marketing"
+          onClick={(e) => {
+            e.preventDefault();
+            nav("marketing");
+          }}
+        >
+          <Wordmark />
+        </a>
+        <div className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center">
+          <ResetConfirmView token={token} nav={nav} />
+        </div>
+        <div className="flex justify-between font-mono text-[11px] text-ink-3">
+          <span>© 2026 Workpad AI</span>
+          <span>Reset links expire in 24h</span>
+        </div>
+      </div>
+      <AuthManifest />
+    </div>
+  );
+}
+
+function ResetConfirmView({
+  token,
+  nav,
+}: {
+  token: string | null;
+  nav: (route: "signin" | "forgot" | "app" | "marketing") => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  if (!token) {
+    return (
+      <div className="flex flex-col gap-3.5">
+        <div className="wp-overline mb-3">Reset password</div>
+        <h1
+          className="m-0 font-serif font-medium text-ink-1"
+          style={{ fontSize: 36, letterSpacing: "-0.02em" }}
+        >
+          Missing reset token.
+        </h1>
+        <p className="mb-4 text-ink-2">
+          The reset link looks incomplete. Request a new one from the forgot-password
+          page.
+        </p>
+        <button
+          type="button"
+          onClick={() => nav("forgot")}
+          className="inline-flex items-center gap-2 self-start rounded-md bg-ink-1 px-4 py-2.5 text-[14px] font-medium text-white transition hover:bg-black"
+        >
+          Request a new link
+        </button>
+      </div>
+    );
+  }
+
+  if (done) {
+    return (
+      <div className="flex flex-col gap-3.5">
+        <div className="wp-overline mb-3">Password updated</div>
+        <h1
+          className="m-0 font-serif font-medium text-ink-1"
+          style={{ fontSize: 36, letterSpacing: "-0.02em" }}
+        >
+          You're all set.
+        </h1>
+        <p className="mb-4 text-ink-2">
+          Your password has been changed. For safety we signed out every session
+          you had open. Sign back in with the new password to continue.
+        </p>
+        <button
+          type="button"
+          onClick={() => nav("signin")}
+          className="inline-flex items-center gap-2 self-start rounded-md bg-ink-1 px-4 py-2.5 text-[14px] font-medium text-white transition hover:bg-black"
+        >
+          Sign in
+          <ArrowRight size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords don't match.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await confirmPasswordReset(token!, password);
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reset the password.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
+      <div className="wp-overline mb-3">Choose a new password</div>
+      <h1
+        className="m-0 font-serif font-medium text-ink-1"
+        style={{ fontSize: 36, letterSpacing: "-0.02em" }}
+      >
+        Set your new password.
+      </h1>
+      <p className="mb-4 text-ink-2">
+        At least 8 characters. When you submit, every other session you had open
+        will be signed out.
+      </p>
+      <ErrorBanner message={error} />
+      <Field label="New password">
+        <TextInput
+          type="password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="new-password"
+          disabled={busy}
+          minLength={8}
+          required
+        />
+      </Field>
+      <Field label="Confirm password">
+        <TextInput
+          type="password"
+          value={confirm}
+          onChange={setConfirm}
+          autoComplete="new-password"
+          disabled={busy}
+          minLength={8}
+          required
+        />
+      </Field>
+      <button
+        type="submit"
+        disabled={busy || password.length < 8 || password !== confirm}
+        className="mt-1 inline-flex w-full items-center justify-center gap-2 rounded-md bg-ink-1 px-4 py-3 text-[14px] font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {busy ? <LoaderCircle size={14} className="animate-spin" /> : null}
+        Update password
+        {!busy ? <ArrowRight size={14} /> : null}
+      </button>
+      <button
+        type="button"
+        onClick={() => nav("signin")}
+        className="mt-2 inline-flex items-center gap-1 self-start bg-transparent text-[12px] text-ink-2 hover:text-ink-1"
+      >
+        <ArrowLeft size={12} />
+        Back to sign in
+      </button>
+    </form>
+  );
+}
+
 
 function AuthManifest() {
   return (
