@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
+import { useAuth } from "./lib/auth";
+import { useSystemTheme, type SystemTheme } from "./lib/systemTheme";
+import { LibraryHome, type ArtifactListItem } from "./components/LibraryHome";
+import { ArtifactDiffView } from "./components/ArtifactDiffView";
 import { Editor as MonacoEditor } from "@monaco-editor/react";
 import type { editor as MonacoEditorNS } from "monaco-editor";
 import {
@@ -24,11 +28,11 @@ import TurndownService from "turndown";
 import DOMPurify from "dompurify";
 
 import "katex/dist/katex.min.css";
-import "highlight.js/styles/github-dark.css";
+import "highlight.js/styles/github.css";
 
 mermaid.initialize({
   startOnLoad: false,
-  theme: "dark",
+  theme: "neutral",
   securityLevel: "strict",
   fontFamily: "inherit",
 });
@@ -55,7 +59,6 @@ marked.use(
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   ArrowDown,
-  ArrowLeftRight,
   ArrowUp,
   Check,
   ChevronDown,
@@ -69,6 +72,8 @@ import {
   GitCommit,
   GitPullRequest,
   Github,
+  History,
+  LogOut,
   MessageSquareText,
   Mic,
   Moon,
@@ -83,6 +88,8 @@ import {
   Plus,
   Redo2,
   RefreshCcw,
+  Settings,
+  Share2,
   Sparkles,
   Sun,
   Undo2,
@@ -106,7 +113,7 @@ function useSidebarCollapsed(): [boolean, () => void] {
 }
 
 type CanvasTheme = "light" | "dark";
-type CanvasMode = "edit" | "preview";
+type CanvasMode = "edit" | "preview" | "diff";
 
 const CANVAS_THEME_STORAGE_KEY = "workpad-canvas-theme";
 const CANVAS_MODE_STORAGE_KEY = "workpad-canvas-mode";
@@ -114,18 +121,13 @@ const CANVAS_MODE_STORAGE_KEY = "workpad-canvas-mode";
 const CANVAS_ON_LEFT_STORAGE_KEY = "workpad-canvas-on-left";
 
 function useCanvasOnLeft(): [boolean, () => void] {
-  const [canvasOnLeft, setCanvasOnLeft] = useState<boolean>(() => {
-    if (typeof window === "undefined") {
-      return true;
-    }
-    const stored = window.localStorage.getItem(CANVAS_ON_LEFT_STORAGE_KEY);
-    return stored === null ? true : stored === "1";
-  });
-
+  // Design v2 locks the layout as: sidebar | chat | paper. Chat is always the
+  // middle column; the paper editor is the dominant right column. The hook
+  // remains only so older stored preferences don't break existing call sites.
+  const [canvasOnLeft, setCanvasOnLeft] = useState<boolean>(false);
   useEffect(() => {
-    window.localStorage.setItem(CANVAS_ON_LEFT_STORAGE_KEY, canvasOnLeft ? "1" : "0");
-  }, [canvasOnLeft]);
-
+    window.localStorage.setItem(CANVAS_ON_LEFT_STORAGE_KEY, "0");
+  }, []);
   return [canvasOnLeft, () => setCanvasOnLeft((value) => !value)];
 }
 
@@ -163,12 +165,12 @@ function useCanvasTheme(): [CanvasTheme, () => void] {
 function canvasEditorClasses(theme: CanvasTheme) {
   if (theme === "light") {
     return {
-      monacoWrap: "overflow-hidden rounded-[24px] border border-stone-200/80 bg-[#f7f5ef]",
+      monacoWrap: "overflow-hidden rounded-[24px] border border-paper-border bg-paper-0",
       monacoTheme: "vs" as const,
     };
   }
   return {
-    monacoWrap: "overflow-hidden rounded-[24px] border border-white/10 bg-black/20",
+    monacoWrap: "overflow-hidden rounded-[24px] border border-shell-border bg-shell-1",
     monacoTheme: "vs-dark" as const,
   };
 }
@@ -364,6 +366,7 @@ marked.setOptions({
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
@@ -762,7 +765,10 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
 
   async deleteConversation(conversationId) {
     try {
-      const response = await fetch(`${API_BASE}/api/conversations/${conversationId}`, { method: "DELETE" });
+      const response = await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
       if (!response.ok) {
         throw new Error(await response.text());
       }
@@ -927,6 +933,7 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     try {
       const response = await fetch(`${API_BASE}/api/chat/stream`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversation_id: get().activeConversationId,
@@ -974,6 +981,7 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     try {
       const response = await fetch(`${API_BASE}/api/chat/regenerate`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversation_id: conversationId,
@@ -1020,6 +1028,7 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     try {
       const response = await fetch(`${API_BASE}/api/chat/edit-last-user`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversation_id: conversationId,
@@ -1064,6 +1073,7 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     try {
       const response = await fetch(`${API_BASE}/api/specs/draft`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -1394,7 +1404,7 @@ function ScrollJumpButton({
       onClick={onClick}
       aria-label={finalLabel}
       title={finalLabel}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-chrome-900/90 text-slate-100 shadow-panel backdrop-blur transition hover:border-white/20 hover:bg-chrome-800 ${className}`}
+      className={`inline-flex h-9 w-9 items-center justify-center rounded-full border border-shell-border bg-shell-1 text-slate-100 shadow-panel backdrop-blur transition hover:border-shell-border-strong hover:bg-shell-2 ${className}`}
     >
       <Icon size={16} />
     </button>
@@ -1518,7 +1528,7 @@ function Toaster() {
               ? "border-rose-400/30 bg-rose-500/15 text-rose-50"
               : toast.kind === "success"
                 ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-50"
-                : "border-white/10 bg-chrome-900/90 text-slate-100"
+                : "border-shell-border bg-shell-1 text-slate-100"
           }`}
         >
           <div className="flex items-start justify-between gap-3">
@@ -1939,7 +1949,7 @@ function CitationDiffPane({ citationId }: { citationId: string }) {
         {expanded ? "Hide diff" : "View diff"}
       </button>
       {expanded ? (
-        <div className="mt-2 rounded-xl border border-white/10 bg-black/40 p-2">
+        <div className="mt-2 rounded-xl border border-shell-border bg-shell-1 p-2">
           {state.loading ? (
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <LoaderCircle size={12} className="animate-spin" /> Loading diff…
@@ -1979,7 +1989,7 @@ function CitationPreviewPane({ citationId }: { citationId: string }) {
 
   if (loading) {
     return (
-      <div className="mt-3 flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-400">
+      <div className="mt-3 flex items-center gap-2 rounded-xl border border-shell-border bg-shell-1 px-3 py-2 text-xs text-slate-400">
         <LoaderCircle size={12} className="animate-spin" /> Loading preview…
       </div>
     );
@@ -1995,7 +2005,7 @@ function CitationPreviewPane({ citationId }: { citationId: string }) {
 
   if (data.kind === "repo_range") {
     return (
-      <div className="mt-3 rounded-xl border border-white/10 bg-black/40 p-2 font-mono text-[11px] text-slate-200">
+      <div className="mt-3 rounded-xl border border-shell-border bg-shell-1 p-2 font-mono text-[11px] text-slate-200">
         {data.lines.map((line) => (
           <div
             key={line.line}
@@ -2012,7 +2022,7 @@ function CitationPreviewPane({ citationId }: { citationId: string }) {
   }
   if (data.kind === "repo_pr") {
     return (
-      <div className="mt-3 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-200">
+      <div className="mt-3 rounded-xl border border-shell-border bg-shell-1 px-3 py-2 text-xs text-slate-200">
         <div className="text-[11px] text-slate-400">
           {data.repo} · {data.state}
           {data.merged ? " · merged" : ""}
@@ -2023,7 +2033,7 @@ function CitationPreviewPane({ citationId }: { citationId: string }) {
   }
   if (data.kind === "repo_commit") {
     return (
-      <div className="mt-3 rounded-xl border border-white/10 bg-black/30 px-3 py-2 font-mono text-[11px] text-slate-200">
+      <div className="mt-3 rounded-xl border border-shell-border bg-shell-1 px-3 py-2 font-mono text-[11px] text-slate-200">
         <div className="text-slate-400">
           {data.repo} · {data.sha.slice(0, 7)}
         </div>
@@ -2087,7 +2097,7 @@ function CitationPopover({
     <div
       ref={containerRef}
       contentEditable={false}
-      className="absolute left-0 top-full z-30 mt-1 w-80 rounded-2xl border border-white/10 bg-chrome-900/95 p-4 text-left text-sm text-slate-100 shadow-panel backdrop-blur-xl"
+      className="absolute left-0 top-full z-30 mt-1 w-80 rounded-2xl border border-shell-border bg-shell-1 p-4 text-left text-sm text-slate-100 shadow-panel backdrop-blur-xl"
     >
       {citation ? (
         <>
@@ -2103,7 +2113,7 @@ function CitationPopover({
                     ? "bg-amber-400/15 text-amber-200"
                     : state === "missing"
                       ? "bg-rose-500/15 text-rose-200"
-                      : "bg-white/10 text-slate-300"
+                      : "bg-shell-2 text-slate-300"
               }`}
             >
               {stateLabel(state)}
@@ -2147,7 +2157,7 @@ function CitationPopover({
                 href={url}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-100 hover:border-white/20 hover:bg-white/10"
+                className="inline-flex items-center gap-1 rounded-full border border-shell-border bg-shell-2 px-3 py-1 text-xs text-slate-100 hover:border-shell-border-strong hover:bg-shell-2"
               >
                 <Github size={12} />
                 View in GitHub
@@ -2370,7 +2380,7 @@ function MermaidBlock({ source }: { source: string }) {
 
   if (!svg) {
     return (
-      <div className="my-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-slate-500">
+      <div className="my-3 rounded-2xl border border-shell-border bg-shell-2 px-4 py-3 text-xs text-slate-500">
         Rendering diagram…
       </div>
     );
@@ -2378,7 +2388,7 @@ function MermaidBlock({ source }: { source: string }) {
 
   return (
     <div
-      className="my-3 overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.03] p-4 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
+      className="my-3 overflow-x-auto rounded-2xl border border-shell-border bg-shell-2 p-4 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
       dangerouslySetInnerHTML={{ __html: sanitizeMermaidSvg(svg) }}
     />
   );
@@ -2499,7 +2509,7 @@ function fitDiagramDimensions(
 
 const MERMAID_PREVIEW_CONFIG = {
   startOnLoad: false,
-  theme: "dark" as const,
+  theme: "neutral" as const,
   securityLevel: "strict" as const,
   fontFamily: "inherit",
 };
@@ -2583,7 +2593,22 @@ function MarkdownWithDiagrams({ content, className }: { content: string; classNa
 }
 
 function RenderedMessageContent({ content }: { content: string }) {
-  return <MarkdownWithDiagrams content={content} className="prose-chat text-[15px] leading-7 text-slate-100" />;
+  return <MarkdownWithDiagrams content={content} className="prose-chat" />;
+}
+
+function messageTimestamp(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
 }
 
 function MessageRow({
@@ -2596,7 +2621,7 @@ function MessageRow({
   isLastAssistant?: boolean;
 }) {
   const isUser = message.role === "user";
-  const Icon = isUser ? User : Sparkles;
+  const { user } = useAuth();
   const status = useWorkbenchStore((state) => state.status);
   const regenerateLastAssistant = useWorkbenchStore((state) => state.regenerateLastAssistant);
   const editLastUserMessage = useWorkbenchStore((state) => state.editLastUserMessage);
@@ -2632,26 +2657,44 @@ function MessageRow({
     void editLastUserMessage(trimmed);
   }
 
+  const initials =
+    (user?.name || user?.email || "")
+      .trim()
+      .split(/\s+|@/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((chunk) => chunk[0]?.toUpperCase() ?? "")
+      .join("") || "A";
+
+  const header = (
+    <div
+      className={`flex items-center gap-2 font-mono text-[10px] text-ink-3 ${
+        isUser ? "justify-end" : "justify-start"
+      }`}
+    >
+      {!isUser ? (
+        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-ink-1 text-white">
+          <Sparkles size={9} />
+        </span>
+      ) : null}
+      <span>
+        {isUser ? "You" : "Workpad AI"} · {messageTimestamp(message.created_at)}
+      </span>
+      {isUser ? (
+        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-signal-soft font-mono text-[8px] font-semibold text-signal-press">
+          {initials}
+        </span>
+      ) : null}
+    </div>
+  );
+
   return (
-    <div className={`group flex items-start gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
-      <div
-        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
-          isUser
-            ? "border-sky-300/30 bg-sky-400/15 text-sky-200"
-            : "border-white/10 bg-white/[0.06] text-slate-200"
-        }`}
-      >
-        <Icon size={14} />
-      </div>
-      <div className={`flex min-w-0 max-w-[85%] flex-col ${isUser ? "items-end" : "items-start"}`}>
-        <div className="mb-1 flex items-center gap-1.5 text-[11px] text-slate-500">
-          <span className="font-medium text-slate-300">{isUser ? "You" : "Workpad AI"}</span>
-          <span>·</span>
-          <span>{formatTimestamp(message.created_at)}</span>
-        </div>
+    <div className="group flex flex-col gap-1.5">
+      {header}
+      <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
         {isUser ? (
           isEditing ? (
-            <div className="w-full min-w-[280px] rounded-[22px] rounded-br-md border border-sky-300/40 bg-sky-500/10 px-4 py-3">
+            <div className="w-full min-w-[240px] max-w-[92%] rounded-[10px] border border-signal-soft-border bg-signal-soft px-3 py-2">
               <textarea
                 ref={textareaRef}
                 value={draft}
@@ -2671,13 +2714,13 @@ function MessageRow({
                   }
                 }}
                 rows={1}
-                className="max-h-48 w-full resize-none border-0 bg-transparent text-[15px] leading-7 text-slate-50 outline-none"
+                className="max-h-48 w-full resize-none border-0 bg-transparent text-[13px] leading-6 text-signal-press outline-none placeholder:text-signal-press/60"
               />
-              <div className="mt-2 flex items-center justify-end gap-2 text-xs">
+              <div className="mt-1.5 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsEditing(false)}
-                  className="rounded-full border border-white/10 px-3 py-1 text-slate-300 transition hover:border-white/20 hover:bg-white/10"
+                  className="rounded-md border border-shell-border-strong bg-shell-1 px-2.5 py-1 text-[12px] text-ink-2 transition hover:bg-shell-2 hover:text-ink-1"
                 >
                   Cancel
                 </button>
@@ -2685,55 +2728,57 @@ function MessageRow({
                   type="button"
                   onClick={handleEditSubmit}
                   disabled={!draft.trim() || draft.trim() === message.content.trim()}
-                  className="rounded-full border border-sky-300/40 bg-sky-400/20 px-3 py-1 text-sky-100 transition hover:border-sky-300/60 hover:bg-sky-400/30 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-md bg-signal px-2.5 py-1 text-[12px] font-medium text-white transition hover:bg-signal-hover disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Save & regenerate
                 </button>
               </div>
             </div>
           ) : (
-            <div className="rounded-[22px] rounded-br-md border border-sky-300/30 bg-sky-500/15 px-5 py-3 text-[15px] leading-7 text-slate-50">
-              <div className="whitespace-pre-wrap">{message.content}</div>
+            <div className="max-w-[92%] whitespace-pre-wrap rounded-[10px] bg-signal-soft px-3 py-2 text-[13px] leading-[1.55] text-signal-press">
+              {message.content}
             </div>
           )
         ) : (
-          <RenderedMessageContent content={message.content} />
-        )}
-        {!isEditing && (isLastUser || isLastAssistant) ? (
-          <div
-            className={`mt-1.5 flex items-center gap-1 text-slate-500 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100 ${
-              isUser ? "self-end" : "self-start"
-            }`}
-          >
-            {isLastUser ? (
-              <button
-                type="button"
-                onClick={() => setIsEditing(true)}
-                disabled={streaming}
-                title="Edit message"
-                aria-label="Edit message"
-                className="inline-flex items-center gap-1 rounded-full border border-white/5 px-2.5 py-1 text-[11px] transition hover:border-white/20 hover:bg-white/10 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Pencil size={12} />
-                Edit
-              </button>
-            ) : null}
-            {isLastAssistant ? (
-              <button
-                type="button"
-                onClick={() => void regenerateLastAssistant()}
-                disabled={streaming}
-                title="Regenerate response"
-                aria-label="Regenerate response"
-                className="inline-flex items-center gap-1 rounded-full border border-white/5 px-2.5 py-1 text-[11px] transition hover:border-white/20 hover:bg-white/10 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <RefreshCcw size={12} />
-                Regenerate
-              </button>
-            ) : null}
+          <div className="max-w-[100%] text-[13px] leading-[1.55] text-ink-1">
+            <RenderedMessageContent content={message.content} />
           </div>
-        ) : null}
+        )}
       </div>
+      {!isEditing && (isLastUser || isLastAssistant) ? (
+        <div
+          className={`flex items-center gap-1 text-ink-3 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100 ${
+            isUser ? "justify-end" : "justify-start"
+          }`}
+        >
+          {isLastUser ? (
+            <button
+              type="button"
+              onClick={() => setIsEditing(true)}
+              disabled={streaming}
+              title="Edit message"
+              aria-label="Edit message"
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] transition hover:bg-shell-2 hover:text-ink-1 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Pencil size={10} />
+              Edit
+            </button>
+          ) : null}
+          {isLastAssistant ? (
+            <button
+              type="button"
+              onClick={() => void regenerateLastAssistant()}
+              disabled={streaming}
+              title="Regenerate response"
+              aria-label="Regenerate response"
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] transition hover:bg-shell-2 hover:text-ink-1 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCcw size={10} />
+              Regenerate
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2768,18 +2813,18 @@ function ModelPicker() {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="glass-button !px-3 !py-1.5"
+        className="inline-flex items-center gap-1.5 rounded-full border border-shell-border bg-shell-1 px-2.5 py-1 font-mono text-[11px] text-ink-2 transition hover:border-shell-border-strong hover:text-ink-1"
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <Sparkles size={14} />
+        <Sparkles size={11} />
         {current.label}
-        <ChevronDown size={14} />
+        <ChevronDown size={11} />
       </button>
       {open ? (
         <div
           role="listbox"
-          className="absolute bottom-full left-0 z-20 mb-2 min-w-[220px] rounded-2xl border border-white/10 bg-chrome-900/95 p-2 shadow-panel backdrop-blur-xl"
+          className="absolute bottom-full left-0 z-20 mb-2 min-w-[220px] rounded-lg border border-shell-border bg-shell-1 p-1 shadow-panel"
         >
           {models.map((model) => {
             const isSelected = model.id === current.id;
@@ -2798,16 +2843,24 @@ function ModelPicker() {
                   setSelectedModel(model.id);
                   setOpen(false);
                 }}
-                className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
-                  disabled ? "cursor-not-allowed text-slate-500" : "text-slate-100 hover:bg-white/10"
-                } ${isSelected ? "bg-white/5" : ""}`}
-                title={disabled ? `Set ${model.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} to enable.` : undefined}
+                className={`flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-[13px] transition ${
+                  disabled
+                    ? "cursor-not-allowed text-ink-3"
+                    : "text-ink-1 hover:bg-shell-2"
+                } ${isSelected ? "bg-shell-2" : ""}`}
+                title={
+                  disabled
+                    ? `Set ${model.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} to enable.`
+                    : undefined
+                }
               >
                 <span className="flex flex-col">
                   <span>{model.label}</span>
-                  <span className="text-xs uppercase tracking-[0.18em] text-slate-500">{model.provider}</span>
+                  <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+                    {model.provider}
+                  </span>
                 </span>
-                {isSelected ? <Check size={14} className="text-sky-300" /> : null}
+                {isSelected ? <Check size={13} className="text-signal" /> : null}
               </button>
             );
           })}
@@ -2843,9 +2896,12 @@ function ChatComposer({
     await sendMessage(composer);
   }
 
+  const wrapperClass = centered
+    ? "mx-auto w-full max-w-2xl"
+    : "flex-none border-t border-shell-border bg-shell-0 px-3 py-2.5";
   return (
-    <div className={centered ? "mx-auto w-full max-w-4xl" : "w-full"}>
-      <div className="rounded-[24px] border border-white/10 bg-white/[0.03] px-4 py-4 sm:px-5">
+    <div className={wrapperClass}>
+      <div className="rounded-[10px] border border-shell-border-strong bg-shell-1 px-3 py-2 transition focus-within:border-signal">
         <textarea
           ref={textareaRef}
           value={composer}
@@ -2857,20 +2913,23 @@ function ChatComposer({
             }
           }}
           rows={1}
-          placeholder="Ask Workpad to draft, revise, or code..."
-          className="max-h-44 w-full resize-none border-0 bg-transparent text-base text-slate-100 outline-none placeholder:text-slate-500"
+          placeholder="Ask Workpad to draft, revise, or code…"
+          className="max-h-44 w-full resize-none border-0 bg-transparent text-[13px] leading-relaxed text-ink-1 outline-none placeholder:text-ink-3"
         />
-        <div className="mt-4 flex items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
-            <ModelPicker />
-          </div>
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <ModelPicker />
           <button
             type="button"
             onClick={() => void handleSubmit()}
             disabled={!composer.trim() || status === "streaming"}
-            className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-950 transition hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Send message"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-shell-2 text-ink-2 transition hover:bg-signal hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-shell-2 disabled:hover:text-ink-2"
           >
-            {status === "streaming" ? <LoaderCircle className="animate-spin" size={18} /> : <ArrowUp size={18} />}
+            {status === "streaming" ? (
+              <LoaderCircle className="animate-spin" size={13} />
+            ) : (
+              <ArrowUp size={13} />
+            )}
           </button>
         </div>
       </div>
@@ -2878,18 +2937,12 @@ function ChatComposer({
   );
 }
 
-function markdownEditorClassName(theme: CanvasTheme): string {
-  const base = "tiptap min-h-[520px] rounded-[24px] border px-6 py-6 focus:outline-none";
-  return theme === "light"
-    ? `${base} tiptap-light border-stone-200/80 bg-[#f7f5ef]`
-    : `${base} border-white/10 bg-black/10`;
+function markdownEditorClassName(_theme: CanvasTheme): string {
+  return "tiptap tiptap-light min-h-[480px] bg-transparent focus:outline-none";
 }
 
-function markdownPreviewClassName(theme: CanvasTheme): string {
-  const base = "tiptap min-h-[520px] rounded-[24px] border px-6 py-6";
-  return theme === "light"
-    ? `${base} tiptap-light border-stone-200/80 bg-[#f7f5ef]`
-    : `${base} border-white/10 bg-black/10`;
+function markdownPreviewClassName(_theme: CanvasTheme): string {
+  return "tiptap tiptap-light min-h-[480px] bg-transparent";
 }
 
 function MarkdownEditor({
@@ -3075,6 +3128,7 @@ function WorkpadPane() {
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [downloadingFormat, setDownloadingFormat] = useState<"markdown" | "docx" | "pdf" | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  const [refreshState, setRefreshState] = useState<"idle" | "refreshing" | "done">("idle");
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
   const canvasSticky = useStickyScroll();
   const monacoEditorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
@@ -3085,12 +3139,15 @@ function WorkpadPane() {
     return (
       <div className="panel-shell hidden h-full flex-col justify-center p-8 lg:flex">
         <div className="mx-auto max-w-md text-center">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-3xl border border-white/10 bg-white/5">
-            <FileCode2 size={30} className="text-sky-200" />
+          <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-lg border border-shell-border bg-shell-2">
+            <FileText size={26} className="text-ink-3" />
           </div>
-          <h2 className="text-2xl font-semibold text-slate-50">Workpad stays empty until the model produces durable output.</h2>
-          <p className="mt-4 text-sm leading-7 text-slate-400">
-            Ask for a memo, checklist, draft, or code file and the model will open the right pane automatically.
+          <div className="wp-overline mb-3">Artifact workspace</div>
+          <h2 className="font-serif text-[28px] font-medium leading-tight tracking-tight text-ink-1">
+            No artifact open.
+          </h2>
+          <p className="mt-4 text-[14px] leading-relaxed text-ink-2">
+            Draft from a repo and transcript, or start one manually. Artifacts render on paper here once the model produces durable output.
           </p>
         </div>
       </div>
@@ -3101,7 +3158,8 @@ function WorkpadPane() {
   const isMarkdownArtifact = artifact.content_type === "markdown";
   const effectiveCanvasMode: CanvasMode = status === "streaming" ? "edit" : canvasMode;
   const isPreviewing = isMarkdownArtifact && effectiveCanvasMode === "preview";
-  const editingDisabled = isReadOnly || isPreviewing;
+  const isDiffing = effectiveCanvasMode === "diff";
+  const editingDisabled = isReadOnly || isPreviewing || isDiffing;
   const canUndo = isMarkdownArtifact
     ? Boolean(markdownEditor && markdownEditor.can().chain().focus().undo().run()) && !editingDisabled
     : !editingDisabled;
@@ -3173,12 +3231,16 @@ function WorkpadPane() {
           `${API_BASE}/api/artifacts/${currentArtifact.id}/export-rendered`,
           {
             method: "POST",
+            credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ format, html: renderedHtml }),
           },
         );
       } else {
-        response = await fetch(`${API_BASE}/api/artifacts/${currentArtifact.id}/export?format=${format}`);
+        response = await fetch(
+          `${API_BASE}/api/artifacts/${currentArtifact.id}/export?format=${format}`,
+          { credentials: "include" },
+        );
       }
       if (!response.ok) {
         throw new Error(await response.text());
@@ -3225,201 +3287,235 @@ function WorkpadPane() {
         return;
       }
     }
-    await refreshActiveArtifact();
+    setRefreshState("refreshing");
+    try {
+      await refreshActiveArtifact();
+      setRefreshState("done");
+      // Flash "done" briefly so the user sees the button did something even
+      // when the server returned the same version we already had.
+      window.setTimeout(() => setRefreshState("idle"), 1400);
+    } catch {
+      setRefreshState("idle");
+    }
   }
 
+  const specTypeLabel = artifact.spec_type === "rfc" ? "RFC" : artifact.content_type;
+  const artifactIdShort = artifact.id.slice(0, 8).toUpperCase();
+  const savedLabel = artifact.dirty ? "SAVING" : "SAVED";
+  const savedClass = artifact.dirty ? "text-state-stale-ink" : "text-state-live";
+
   return (
-    <div className="panel-shell flex h-full flex-col overflow-hidden">
-      <div className="border-b border-white/10 px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <input
-              value={artifact.title}
-              onChange={(event) => setTitle(event.target.value)}
-              className="w-full truncate border-0 bg-transparent text-xl font-semibold text-slate-50 outline-none"
-            />
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-              <span className="text-slate-400">{artifact.content_type}</span>
-              <span>·</span>
-              <span>v{artifact.version}</span>
-              <span>·</span>
-              {artifact.dirty ? <span className="text-amber-300">Saving…</span> : <span>Saved</span>}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {isMarkdownArtifact ? (
-              <div
-                className={`inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] p-0.5 text-xs ${
-                  isReadOnly ? "opacity-50" : ""
-                }`}
-              >
+    <div className="flex h-full flex-col overflow-hidden bg-shell-0">
+      <div className="sticky top-0 z-[3] flex flex-none items-center gap-2 border-b border-shell-border bg-shell-1 px-4 py-2">
+        <span className="inline-flex items-center rounded-full border border-shell-border-strong bg-shell-2 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-ink-2">
+          {String(specTypeLabel).toUpperCase()}
+        </span>
+        <span className="font-mono text-[11px] text-ink-2">{artifactIdShort}</span>
+        <span className="font-mono text-[11px] text-ink-3">· V{artifact.version} ·</span>
+        <span className={`font-mono text-[11px] font-medium tracking-[0.08em] ${savedClass}`}>
+          {savedLabel}
+        </span>
+        <div className="flex-1 min-w-[8px]" />
+        {isMarkdownArtifact ? (
+          <div
+            className={`inline-flex items-center rounded-md border border-shell-border bg-shell-2 p-0.5 ${
+              isReadOnly ? "opacity-50" : ""
+            }`}
+          >
+            {(
+              [
+                { id: "edit", label: "Edit" },
+                { id: "preview", label: "Preview" },
+                { id: "diff", label: "Diff" },
+              ] as const
+            ).map((opt) => {
+              const active = effectiveCanvasMode === opt.id;
+              const disabled = isReadOnly && opt.id !== "edit";
+              return (
                 <button
+                  key={opt.id}
                   type="button"
-                  onClick={() => setCanvasMode("edit")}
-                  disabled={isReadOnly}
-                  className={`rounded-full px-3 py-1 transition ${
-                    effectiveCanvasMode === "edit"
-                      ? "bg-white/10 text-slate-100"
-                      : "text-slate-400 hover:text-slate-200"
+                  onClick={() => setCanvasMode(opt.id as CanvasMode)}
+                  disabled={disabled}
+                  title={
+                    disabled
+                      ? `${opt.label} disabled while streaming`
+                      : opt.id === "diff"
+                        ? "Compare with the previous version"
+                        : undefined
+                  }
+                  className={`rounded px-2.5 py-0.5 text-[12px] font-medium transition ${
+                    active
+                      ? "bg-shell-0 text-ink-1 shadow-sm"
+                      : "text-ink-2 hover:text-ink-1"
                   } disabled:cursor-not-allowed`}
-                  aria-pressed={effectiveCanvasMode === "edit"}
+                  aria-pressed={active}
                 >
-                  Edit
+                  {opt.label}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setCanvasMode("preview")}
-                  disabled={isReadOnly}
-                  title={isReadOnly ? "Preview disabled while streaming" : undefined}
-                  className={`rounded-full px-3 py-1 transition ${
-                    effectiveCanvasMode === "preview"
-                      ? "bg-white/10 text-slate-100"
-                      : "text-slate-400 hover:text-slate-200"
-                  } disabled:cursor-not-allowed`}
-                  aria-pressed={effectiveCanvasMode === "preview"}
-                >
-                  Preview
-                </button>
-              </div>
-            ) : null}
-            <button
-              type="button"
-              onClick={toggleCanvasTheme}
-              title={isLightCanvas ? "Switch canvas to dark" : "Switch canvas to light"}
-              aria-label={isLightCanvas ? "Switch canvas to dark" : "Switch canvas to light"}
-              className="glass-button !px-3"
-            >
-              {isLightCanvas ? <Moon size={16} /> : <Sun size={16} />}
-            </button>
-            <button
-              type="button"
-              onClick={handleUndo}
-              disabled={!canUndo}
-              title="Undo"
-              aria-label="Undo"
-              className="glass-button !px-3 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Undo2 size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={handleRedo}
-              disabled={!canRedo}
-              title="Redo"
-              aria-label="Redo"
-              className="glass-button !px-3 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Redo2 size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleRefresh()}
-              disabled={isReadOnly}
-              title="Refresh from server"
-              aria-label="Refresh from server"
-              className="glass-button !px-3 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <RefreshCcw size={16} />
-            </button>
-            {artifact.spec_type === "rfc" ? (
-              <button
-                type="button"
-                onClick={() => void verifyActiveCitations({ force: true })}
-                disabled={verify.phase === "verifying"}
-                title={
-                  verify.phase === "error"
-                    ? verify.error?.message ?? "Verify failed - click to retry"
-                    : "Check citations against the repo"
-                }
-                aria-label="Verify citations"
-                className="glass-button !px-3 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {verify.phase === "verifying" ? (
-                  <LoaderCircle size={16} className="animate-spin" />
-                ) : verify.phase === "error" ? (
-                  <RefreshCcw size={16} className="text-rose-300" />
-                ) : (
-                  <RefreshCcw size={16} />
-                )}
-              </button>
-            ) : null}
-            <button type="button" onClick={() => void handleCopy()} className="glass-button">
-              {copyState === "copied" ? <Check size={16} /> : <Copy size={16} />}
-              {copyState === "copied" ? "Copied" : "Copy"}
-            </button>
-            <div className="relative" ref={downloadMenuRef}>
-              <button
-                type="button"
-                onClick={() => setDownloadMenuOpen((open) => !open)}
-                disabled={downloadingFormat !== null}
-                aria-busy={downloadingFormat !== null}
-                className="glass-button min-w-[9.5rem] justify-center disabled:cursor-wait disabled:opacity-80"
-              >
-                {downloadingFormat ? (
-                  <LoaderCircle size={16} className="animate-spin" />
-                ) : (
-                  <FileDown size={16} />
-                )}
-                Download
-                <ChevronDown size={16} className={downloadingFormat ? "opacity-40" : ""} />
-              </button>
-              {downloadMenuOpen ? (
-                <div className="absolute right-0 top-full z-20 mt-2 min-w-[180px] rounded-2xl border border-white/10 bg-chrome-900/95 p-2 shadow-panel backdrop-blur-xl">
-                  {(
-                    [
-                      { format: "markdown", label: "Markdown", ext: ".md" },
-                      { format: "docx", label: "Word", ext: ".docx" },
-                      { format: "pdf", label: "PDF", ext: ".pdf" },
-                    ] as const
-                  ).map((item) => {
-                    const isActive = downloadingFormat === item.format;
-                    return (
-                      <button
-                        key={item.format}
-                        type="button"
-                        onClick={() => void handleDownload(item.format)}
-                        disabled={downloadingFormat !== null}
-                        className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-100 transition hover:bg-white/10 disabled:cursor-wait disabled:opacity-60 disabled:hover:bg-transparent"
-                      >
-                        <span className="flex items-center gap-2">
-                          {isActive ? (
-                            <LoaderCircle size={14} className="animate-spin text-slate-300" />
-                          ) : null}
-                          {item.label}
-                        </span>
-                        <span className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                          {item.ext}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
+              );
+            })}
           </div>
+        ) : null}
+        <div className="mx-1 h-4 w-px bg-shell-border" />
+        <PaperIconButton
+          title="Undo"
+          onClick={handleUndo}
+          disabled={!canUndo}
+        >
+          <Undo2 size={14} />
+        </PaperIconButton>
+        <PaperIconButton
+          title="Redo"
+          onClick={handleRedo}
+          disabled={!canRedo}
+        >
+          <Redo2 size={14} />
+        </PaperIconButton>
+        <PaperIconButton
+          title={
+            refreshState === "refreshing"
+              ? "Refreshing from server…"
+              : refreshState === "done"
+                ? "Up to date"
+                : "Refresh from server"
+          }
+          onClick={() => void handleRefresh()}
+          disabled={isReadOnly || refreshState === "refreshing"}
+        >
+          {refreshState === "refreshing" ? (
+            <LoaderCircle size={14} className="animate-spin" />
+          ) : refreshState === "done" ? (
+            <Check size={14} className="text-state-live" />
+          ) : (
+            <RefreshCcw size={14} />
+          )}
+        </PaperIconButton>
+        <PaperIconButton
+          title={copyState === "copied" ? "Copied" : "Copy"}
+          onClick={() => void handleCopy()}
+        >
+          {copyState === "copied" ? <Check size={14} /> : <Copy size={14} />}
+        </PaperIconButton>
+        {artifact.spec_type === "rfc" ? (
+          <PaperIconButton
+            title={
+              verify.phase === "error"
+                ? verify.error?.message ?? "Verify failed — click to retry"
+                : "Verify citations"
+            }
+            onClick={() => void verifyActiveCitations({ force: true })}
+            disabled={verify.phase === "verifying"}
+          >
+            {verify.phase === "verifying" ? (
+              <LoaderCircle size={14} className="animate-spin" />
+            ) : verify.phase === "error" ? (
+              <RefreshCcw size={14} className="text-state-missing" />
+            ) : (
+              <RefreshCcw size={14} />
+            )}
+          </PaperIconButton>
+        ) : null}
+        <div className="relative" ref={downloadMenuRef}>
+          <PaperIconButton
+            title="Download"
+            onClick={() => setDownloadMenuOpen((open) => !open)}
+            disabled={downloadingFormat !== null}
+          >
+            {downloadingFormat ? (
+              <LoaderCircle size={14} className="animate-spin" />
+            ) : (
+              <FileDown size={14} />
+            )}
+          </PaperIconButton>
+          {downloadMenuOpen ? (
+            <div className="absolute right-0 top-full z-20 mt-1.5 min-w-[180px] rounded-lg border border-shell-border bg-shell-1 p-1 shadow-panel">
+              {(
+                [
+                  { format: "markdown", label: "Markdown", ext: ".md" },
+                  { format: "docx", label: "Word", ext: ".docx" },
+                  { format: "pdf", label: "PDF", ext: ".pdf" },
+                ] as const
+              ).map((item) => {
+                const isActive = downloadingFormat === item.format;
+                return (
+                  <button
+                    key={item.format}
+                    type="button"
+                    onClick={() => void handleDownload(item.format)}
+                    disabled={downloadingFormat !== null}
+                    className="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-[13px] text-ink-1 transition hover:bg-shell-2 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <span className="flex items-center gap-2">
+                      {isActive ? (
+                        <LoaderCircle size={13} className="animate-spin text-ink-3" />
+                      ) : null}
+                      {item.label}
+                    </span>
+                    <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+                      {item.ext}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+        <PaperIconButton
+          title={isLightCanvas ? "Switch canvas to dark" : "Switch canvas to light"}
+          onClick={toggleCanvasTheme}
+        >
+          {isLightCanvas ? <Moon size={14} /> : <Sun size={14} />}
+        </PaperIconButton>
+      </div>
+      <div className="flex-none border-b border-shell-border bg-shell-0 px-6 pb-3 pt-5">
+        <input
+          value={artifact.title}
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="Untitled artifact"
+          className="w-full truncate border-0 bg-transparent font-serif text-[28px] font-medium tracking-tight text-ink-1 outline-none placeholder:text-ink-3"
+          style={{ letterSpacing: "-0.02em", lineHeight: 1.2 }}
+        />
+        <div className="mt-1 font-mono text-[11px] text-ink-3">
+          {artifact.content_type} ·{" "}
+          {artifact.dirty ? (
+            <span className="text-state-stale-ink">saving…</span>
+          ) : (
+            <span className="text-state-live">saved</span>
+          )}
         </div>
       </div>
       <DriftBanner />
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative flex-1 overflow-hidden bg-shell-0">
         <div
           ref={canvasSticky.containerRef}
           onScroll={canvasSticky.onScroll}
-          className="h-full overflow-auto p-5"
+          className="h-full overflow-auto px-6 py-8"
         >
         <div ref={canvasSticky.contentRef}>
-        {artifact.content_type === "markdown" ? (
-          isPreviewing ? (
-            <MarkdownWithDiagrams content={artifact.content} className={markdownPreviewClassName(canvasTheme)} />
-          ) : (
-            <MarkdownEditor
-              artifactId={artifact.id}
-              readOnly={isReadOnly}
-              value={artifact.content}
-              onChange={setContent}
-              theme={canvasTheme}
-              onEditorReady={setMarkdownEditor}
-            />
-          )
+        {isDiffing ? (
+          <ArtifactDiffView
+            artifactId={artifact.id}
+            latestVersion={artifact.version}
+            canvasTheme={canvasTheme}
+          />
+        ) : artifact.content_type === "markdown" ? (
+          <article
+            className={`paper mx-auto max-w-[780px] rounded-lg border border-paper-border bg-paper-0 px-12 py-12 shadow-none ${canvasTheme === "dark" ? "paper-dark" : ""}`}
+          >
+            {isPreviewing ? (
+              <MarkdownWithDiagrams content={artifact.content} className={markdownPreviewClassName(canvasTheme)} />
+            ) : (
+              <MarkdownEditor
+                artifactId={artifact.id}
+                readOnly={isReadOnly}
+                value={artifact.content}
+                onChange={setContent}
+                theme={canvasTheme}
+                onEditorReady={setMarkdownEditor}
+              />
+            )}
+          </article>
         ) : (
           <div className={editorChrome.monacoWrap}>
             <MonacoEditor
@@ -3447,6 +3543,7 @@ function WorkpadPane() {
         )}
         </div>
         </div>
+
         {artifact.content_type === "markdown" &&
         (canvasSticky.showJumpTop || canvasSticky.showJump) ? (
           <div className="pointer-events-none absolute bottom-4 right-4 flex flex-col items-end gap-2">
@@ -3495,7 +3592,6 @@ function ConversationCard({ conversation, active }: { conversation: Conversation
 
   const isArchived = Boolean(conversation.archived_at);
   const artifactCount = conversation.artifact_count;
-  const artifactLabel = `${artifactCount} ${artifactCount === 1 ? "artifact" : "artifacts"}`;
 
   function handleDelete(event: React.MouseEvent) {
     event.stopPropagation();
@@ -3513,26 +3609,29 @@ function ConversationCard({ conversation, active }: { conversation: Conversation
   return (
     <div
       ref={containerRef}
-      className={`group relative rounded-2xl border transition ${
+      className={`group relative rounded-md border transition ${
         active
-          ? "border-sky-300/25 bg-sky-400/10"
-          : "border-transparent hover:border-white/10 hover:bg-white/[0.04]"
-      } ${isArchived ? "opacity-70" : ""}`}
+          ? "border-signal-soft-border bg-signal-soft"
+          : "border-transparent hover:bg-shell-2"
+      } ${isArchived ? "opacity-60" : ""}`}
     >
       <button
         type="button"
         onClick={() => void selectConversation(conversation.id)}
-        className="block w-full rounded-2xl px-3 py-2.5 pr-9 text-left"
+        className="block w-full rounded-md px-2.5 py-2 pr-8 text-left"
       >
-        <div className="truncate text-sm font-medium text-slate-100">
+        <div className={`truncate text-[12.5px] ${active ? "font-medium text-signal-press" : "font-normal text-ink-1"}`}>
           {conversation.title}
-          {isArchived ? <span className="ml-2 text-[10px] uppercase tracking-[0.2em] text-slate-500">archived</span> : null}
+          {isArchived ? (
+            <span className="ml-2 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-3">
+              archived
+            </span>
+          ) : null}
         </div>
-        <div className="mt-0.5 truncate text-xs text-slate-400">
-          {conversation.last_message_preview || "Fresh conversation"}
-        </div>
-        <div className="mt-1 text-[11px] text-slate-500">
-          {artifactLabel} · {formatTimestamp(conversation.updated_at)}
+        <div className="mt-0.5 flex items-center gap-2 truncate font-mono text-[10px] text-ink-3">
+          <span>{artifactCount} {artifactCount === 1 ? "artifact" : "artifacts"}</span>
+          <span>·</span>
+          <span>{formatTimestamp(conversation.updated_at)}</span>
         </div>
       </button>
       <button
@@ -3541,16 +3640,16 @@ function ConversationCard({ conversation, active }: { conversation: Conversation
           event.stopPropagation();
           setMenuOpen((value) => !value);
         }}
-        title="Conversation actions"
-        aria-label="Conversation actions"
-        className={`absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition ${
-          menuOpen ? "bg-white/10 text-slate-100 opacity-100" : "opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-slate-100"
+        title="Thread actions"
+        aria-label="Thread actions"
+        className={`absolute right-1 top-1.5 flex h-6 w-6 items-center justify-center rounded-md text-ink-3 transition ${
+          menuOpen ? "bg-shell-2 text-ink-1 opacity-100" : "opacity-0 group-hover:opacity-100 hover:bg-shell-2 hover:text-ink-1"
         }`}
       >
         <MoreHorizontal size={14} />
       </button>
       {menuOpen ? (
-        <div className="absolute right-1.5 top-10 z-20 min-w-[160px] rounded-2xl border border-white/10 bg-chrome-900/95 p-1.5 shadow-panel backdrop-blur-xl">
+        <div className="absolute right-1 top-9 z-20 min-w-[160px] rounded-lg border border-shell-border bg-shell-1 p-1 shadow-panel">
           <button
             type="button"
             onClick={(event) => {
@@ -3558,17 +3657,17 @@ function ConversationCard({ conversation, active }: { conversation: Conversation
               setMenuOpen(false);
               void (isArchived ? unarchiveConversation(conversation.id) : archiveConversation(conversation.id));
             }}
-            className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left text-sm text-slate-100 transition hover:bg-white/10"
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ink-1 transition hover:bg-shell-2"
           >
-            {isArchived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+            {isArchived ? <ArchiveRestore size={13} /> : <Archive size={13} />}
             {isArchived ? "Unarchive" : "Archive"}
           </button>
           <button
             type="button"
             onClick={handleDelete}
-            className="flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-left text-sm text-rose-200 transition hover:bg-rose-500/15"
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-state-missing-ink transition hover:bg-state-missing-soft"
           >
-            <Trash2 size={14} />
+            <Trash2 size={13} />
             Delete
           </button>
         </div>
@@ -3577,65 +3676,124 @@ function ConversationCard({ conversation, active }: { conversation: Conversation
   );
 }
 
-function Sidebar() {
+function Sidebar({ collapsed }: { collapsed: boolean }) {
   const conversations = useWorkbenchStore((state) => state.conversations);
   const activeConversationId = useWorkbenchStore((state) => state.activeConversationId);
   const startNewConversation = useWorkbenchStore((state) => state.startNewConversation);
   const showArchived = useWorkbenchStore((state) => state.showArchived);
   const setShowArchived = useWorkbenchStore((state) => state.setShowArchived);
-  const [collapsed, toggleCollapsed] = useSidebarCollapsed();
+  const { user, signOut } = useAuth();
+  const [systemTheme, setSystemTheme] = useSystemTheme();
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const liveCount = conversations.filter((c) => !c.archived_at).length;
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    function onDown(event: MouseEvent) {
+      if (!accountMenuRef.current?.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [accountMenuOpen]);
+
+  const displayName = user?.name?.trim() || user?.email?.split("@")[0] || "Account";
+  const displayHandle = user?.email || "signed in";
+  const initials = (user?.name || user?.email || "")
+    .trim()
+    .split(/\s+|@/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((chunk) => chunk[0]?.toUpperCase() ?? "")
+    .join("") || "A";
 
   if (collapsed) {
     return (
-      <aside className="hidden h-full w-16 flex-col items-center gap-3 border-r border-white/10 bg-black/10 px-2 py-5 lg:flex">
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          title="Expand sidebar"
-          aria-label="Expand sidebar"
-          className="glass-button !px-3"
-        >
-          <PanelLeftOpen size={16} />
-        </button>
+      <aside className="hidden h-full w-14 flex-none flex-col items-center gap-3 border-r border-shell-border bg-shell-1 py-4 lg:flex">
         <button
           type="button"
           onClick={() => void startNewConversation()}
-          title="New conversation"
-          aria-label="New conversation"
-          className="glass-button !px-3"
+          title="New artifact"
+          aria-label="New artifact"
+          className="flex h-8 w-8 items-center justify-center rounded-md bg-signal text-white transition hover:bg-signal-hover"
         >
           <Plus size={16} />
+        </button>
+        <button
+          type="button"
+          title="Threads"
+          aria-label="Threads"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-ink-2 transition hover:bg-shell-2 hover:text-ink-1"
+        >
+          <MessageSquareText size={16} />
         </button>
       </aside>
     );
   }
 
   return (
-    <aside className="hidden h-full w-[272px] flex-col border-r border-white/10 bg-black/10 px-3 py-4 lg:flex">
-      <div className="mb-4 flex items-center justify-between gap-2 px-1">
-        <div className="text-[15px] font-semibold text-slate-50">Conversations</div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => void startNewConversation()}
-            title="New conversation"
-            aria-label="New conversation"
-            className="glass-button !px-2.5 !py-1.5"
-          >
-            <Plus size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={toggleCollapsed}
-            title="Collapse sidebar"
-            aria-label="Collapse sidebar"
-            className="glass-button !px-2.5 !py-1.5"
-          >
-            <PanelLeftClose size={14} />
-          </button>
-        </div>
+    <aside className="hidden h-full w-[260px] flex-none flex-col border-r border-shell-border bg-shell-1 px-3 py-3 lg:flex">
+      <button
+        type="button"
+        onClick={() => void startNewConversation()}
+        className="mb-3 flex w-full items-center justify-center gap-2 rounded-lg bg-signal px-3 py-2 text-[13px] font-medium text-white transition hover:bg-signal-hover"
+      >
+        <Plus size={14} />
+        New artifact
+      </button>
+
+      <div className="px-2">
+        <div className="wp-overline mb-1.5">Workspace</div>
       </div>
-      <div className="-mr-1 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+      <nav className="flex flex-col gap-0.5 pb-3">
+        <SidebarNavItem icon={<FileText size={14} />} label="Library" count={null} disabled />
+        <SidebarNavItem
+          icon={<MessageSquareText size={14} />}
+          label="Threads"
+          count={liveCount}
+          active
+        />
+        <SidebarNavItem icon={<GitCommit size={14} />} label="Search" kbd="⌘K" disabled />
+        <SidebarNavItem icon={<Settings size={14} />} label="Settings" disabled />
+      </nav>
+
+      <div className="px-2 pb-1.5 pt-2">
+        <div className="wp-overline">Collections</div>
+      </div>
+      <nav className="flex flex-col gap-0.5 pb-3">
+        {([
+          { label: "acme/platform", count: 89, dot: "bg-state-live" },
+          { label: "acme/workpad-ai", count: 34, dot: "bg-state-live" },
+          { label: "acme/legacy-billing", count: 19, dot: "bg-state-stale" },
+        ] as const).map((c) => (
+          <button
+            key={c.label}
+            type="button"
+            className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left transition hover:bg-shell-2"
+          >
+            <span className={`h-2 w-2 flex-none rounded-sm ${c.dot}`} />
+            <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-2">
+              {c.label}
+            </span>
+            <span className="font-mono text-[10px] text-ink-3">{c.count}</span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="flex items-center justify-between px-2 pb-1.5 pt-2">
+        <div className="wp-overline">Recent threads</div>
+        {conversations.length > 4 ? (
+          <span className="font-mono text-[10px] text-ink-3">{conversations.length}</span>
+        ) : null}
+      </div>
+      <div className="-mr-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1">
+        {conversations.length === 0 ? (
+          <div className="px-2 py-4 text-[12px] text-ink-3">
+            No threads yet. Start one below.
+          </div>
+        ) : null}
         {conversations.map((conversation) => (
           <ConversationCard
             key={conversation.id}
@@ -3647,12 +3805,155 @@ function Sidebar() {
       <button
         type="button"
         onClick={() => void setShowArchived(!showArchived)}
-        className="mt-3 flex items-center justify-center gap-2 rounded-full border border-transparent px-3 py-1.5 text-[11px] text-slate-500 transition hover:border-white/10 hover:bg-white/[0.04] hover:text-slate-300"
+        className="mx-2 mt-3 flex items-center justify-center gap-2 rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3 transition hover:bg-shell-2 hover:text-ink-2"
       >
-        {showArchived ? <ArchiveRestore size={12} /> : <Archive size={12} />}
+        {showArchived ? <ArchiveRestore size={11} /> : <Archive size={11} />}
         {showArchived ? "Hide archived" : "Show archived"}
       </button>
+
+      <div
+        ref={accountMenuRef}
+        className="relative mt-3 border-t border-shell-border pt-3"
+      >
+        <button
+          type="button"
+          onClick={() => setAccountMenuOpen((open) => !open)}
+          className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition hover:bg-shell-2"
+        >
+          <div className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-paper-2 font-mono text-[10px] font-semibold text-paper-ink">
+            {initials}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-medium text-ink-1">
+              {displayName}
+            </div>
+            <div className="truncate font-mono text-[10px] text-ink-3">
+              {displayHandle}
+            </div>
+          </div>
+          <ChevronDown
+            size={14}
+            className={`flex-none text-ink-3 transition ${accountMenuOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+        {accountMenuOpen ? (
+          <div className="absolute bottom-full left-0 right-0 z-30 mb-2 rounded-lg border border-shell-border bg-shell-1 p-1 shadow-panel">
+            <div className="px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+              Signed in as
+            </div>
+            <div className="truncate px-2.5 pb-2 text-[12px] text-ink-1">
+              {user?.email ?? "—"}
+            </div>
+            <div className="h-px bg-shell-border" />
+            <div className="px-2.5 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+              Appearance
+            </div>
+            <div className="mb-1 flex items-center gap-1 rounded-md bg-shell-2 p-0.5">
+              {(
+                [
+                  { id: "light", label: "Light", icon: <Sun size={11} /> },
+                  { id: "dark", label: "Dark", icon: <Moon size={11} /> },
+                  { id: "auto", label: "Auto", icon: null },
+                ] as const
+              ).map((opt) => {
+                const active = systemTheme === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setSystemTheme(opt.id as SystemTheme)}
+                    className={`flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition ${
+                      active
+                        ? "bg-shell-1 text-ink-1 shadow-sm"
+                        : "text-ink-2 hover:text-ink-1"
+                    }`}
+                    aria-pressed={active}
+                  >
+                    {opt.icon}
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="h-px bg-shell-border" />
+            <button
+              type="button"
+              onClick={() => {
+                setAccountMenuOpen(false);
+                void signOut();
+              }}
+              className="mt-1 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ink-1 transition hover:bg-shell-2"
+            >
+              <LogOut size={13} />
+              Sign out
+            </button>
+          </div>
+        ) : null}
+      </div>
     </aside>
+  );
+}
+
+function WorkpadWordmark({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
+  const fontSize = size === "sm" ? 14 : size === "lg" ? 24 : 17;
+  const dot = size === "sm" ? 6 : size === "lg" ? 9 : 7;
+  const gap = size === "sm" ? 5 : size === "lg" ? 9 : 6;
+  return (
+    <span
+      className="inline-flex items-center font-sans font-bold tracking-tight text-ink-1"
+      style={{ fontSize, gap, letterSpacing: "-0.02em" }}
+    >
+      Workpad
+      <span
+        className="wp-pulse inline-block"
+        style={{ width: dot + 1, height: dot + 1, background: "var(--accent-signal)" }}
+      />
+    </span>
+  );
+}
+
+function SidebarNavItem({
+  icon,
+  label,
+  count,
+  kbd,
+  active,
+  disabled,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  count?: number | null;
+  kbd?: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
+  const base =
+    "relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] transition";
+  const tone = active
+    ? "bg-signal-soft text-signal-press font-medium"
+    : disabled
+      ? "text-ink-3 cursor-default"
+      : "text-ink-2 hover:bg-shell-2 hover:text-ink-1";
+  return (
+    <button type="button" onClick={disabled ? undefined : onClick} className={`${base} ${tone}`}>
+      {active ? (
+        <span className="absolute -left-3 top-1.5 bottom-1.5 w-[2px] rounded-full bg-signal" />
+      ) : null}
+      {icon}
+      <span className="flex-1">{label}</span>
+      {count !== undefined && count !== null ? (
+        <span
+          className={`font-mono text-[10px] ${
+            active ? "text-signal-press" : "text-ink-3"
+          }`}
+        >
+          {count}
+        </span>
+      ) : null}
+      {kbd ? <span className="font-mono text-[10px] text-ink-3">{kbd}</span> : null}
+    </button>
   );
 }
 
@@ -3704,7 +4005,7 @@ function DraftProgressRow({
       ? "border-emerald-300/40 bg-emerald-400/15 text-emerald-100"
       : status === "active"
         ? "border-sky-300/40 bg-sky-400/15 text-sky-100"
-        : "border-white/10 bg-white/5 text-slate-400";
+        : "border-shell-border bg-shell-2 text-slate-400";
   return (
     <li className="flex items-start gap-3">
       <span
@@ -3859,8 +4160,8 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
     : draft.error;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl rounded-[28px] border border-white/10 bg-chrome-900/95 p-6 shadow-panel">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm" style={{ background: "rgba(12, 13, 16, 0.45)" }}>
+      <div className="w-full max-w-2xl rounded-[28px] border border-shell-border bg-shell-1 p-6 shadow-panel">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-xs uppercase tracking-[0.22em] text-slate-500">New artifact</div>
@@ -3885,7 +4186,7 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
         </div>
 
         {(isBusy || draft.phase === "completed") && (
-          <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5">
+          <div className="mt-6 rounded-2xl border border-shell-border bg-shell-1 p-5">
             <DraftProgress />
             {draft.phase === "completed" ? (
               <div className="mt-4 rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-100">
@@ -3924,7 +4225,7 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
               disabled={isBusy}
               rows={8}
               placeholder={"00:00:12 Alex: We should move auth out of the legacy service.\n00:00:45 Sam: Agreed, let me check the current handler."}
-              className="mt-2 w-full resize-y rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-400/40 focus:outline-none"
+              className="mt-2 w-full resize-y rounded-2xl border border-shell-border bg-shell-1 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-400/40 focus:outline-none"
             />
             <div className="mt-1 text-right text-[11px] text-slate-500">
               {transcriptCount.toLocaleString()} chars
@@ -3941,7 +4242,7 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
                 onChange={(event) => setRepoInput(event.target.value)}
                 disabled={isBusy}
                 placeholder="acme/foo or https://github.com/acme/foo"
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-400/40 focus:outline-none"
+                className="mt-2 w-full rounded-2xl border border-shell-border bg-shell-1 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-400/40 focus:outline-none"
               />
               <div className="mt-1 text-[11px] text-slate-500">
                 {repoInput.trim()
@@ -3961,7 +4262,7 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
                 disabled={isBusy}
                 type="password"
                 placeholder="Falls back to GITHUB_DEFAULT_TOKEN"
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-400/40 focus:outline-none"
+                className="mt-2 w-full rounded-2xl border border-shell-border bg-shell-1 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-400/40 focus:outline-none"
               />
               <div className="mt-1 text-[11px] text-slate-500">
                 Stored per-request. Use a PAT with <code>repo:read</code>.
@@ -4014,6 +4315,136 @@ function NewSpecModal({ open, onClose }: { open: boolean; onClose: () => void })
   );
 }
 
+function PaperIconButton({
+  title,
+  onClick,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      className="flex h-7 w-7 items-center justify-center rounded-md text-ink-2 transition hover:bg-shell-2 hover:text-ink-1 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
+function ChatHeaderIcon({
+  title,
+  onClick,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className="flex h-7 w-7 items-center justify-center rounded-md text-ink-2 transition hover:bg-shell-2 hover:text-ink-1"
+    >
+      {children}
+    </button>
+  );
+}
+
+function AppHeader({
+  showWorkpad,
+  activeTitle,
+  onNewSpec,
+  sidebarCollapsed,
+  onToggleSidebar,
+}: {
+  showWorkpad: boolean;
+  activeTitle: string | null;
+  onNewSpec: () => void;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+}) {
+  const { user } = useAuth();
+  const initials =
+    (user?.name || user?.email || "")
+      .trim()
+      .split(/\s+|@/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((chunk) => chunk[0]?.toUpperCase() ?? "")
+      .join("") || "A";
+  const crumbs = showWorkpad
+    ? ["Library", activeTitle || "Untitled artifact"]
+    : ["Library"];
+  return (
+    <header className="flex h-14 flex-none items-center gap-5 border-b border-shell-border bg-shell-1 px-4 sm:px-5">
+      <button
+        type="button"
+        onClick={onToggleSidebar}
+        title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className="hidden h-7 w-7 flex-none items-center justify-center rounded-md text-ink-3 transition hover:bg-shell-2 hover:text-ink-1 lg:flex"
+      >
+        {sidebarCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+      </button>
+      <WorkpadWordmark />
+      <div className="flex min-w-0 items-center gap-3 font-mono text-[12px] text-ink-3">
+        {crumbs.map((crumb, i) => (
+          <span key={i} className="flex items-center gap-3">
+            <span className="text-ink-3">/</span>
+            <span
+              className={
+                i === crumbs.length - 1
+                  ? "truncate font-medium text-ink-1"
+                  : "truncate text-ink-3"
+              }
+              style={{ maxWidth: 360 }}
+            >
+              {crumb}
+            </span>
+          </span>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="ml-auto hidden items-center gap-2 rounded-md border border-shell-border bg-shell-2 px-3 py-1.5 font-mono text-[11.5px] text-ink-3 transition hover:border-shell-border-strong hover:text-ink-2 md:flex md:min-w-[300px]"
+      >
+        <GitCommit size={12} />
+        <span>Search artifacts, sources, threads</span>
+        <span className="ml-auto flex items-center gap-1">
+          <span className="wp-kbd">⌘</span>
+          <span className="wp-kbd">K</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={onNewSpec}
+        className="inline-flex items-center gap-1.5 rounded-md border border-shell-border-strong bg-shell-1 px-2.5 py-1.5 text-[12px] font-medium text-ink-1 transition hover:bg-shell-2"
+      >
+        <Sparkles size={14} />
+        Ask
+      </button>
+      <div
+        className="flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-full bg-paper-2 font-mono text-[10px] font-semibold text-paper-ink"
+        title={user?.email ?? undefined}
+      >
+        {initials}
+      </div>
+    </header>
+  );
+}
+
 function App() {
   const bootstrap = useWorkbenchStore((state) => state.bootstrap);
   const messages = useWorkbenchStore((state) => state.messages);
@@ -4021,9 +4452,12 @@ function App() {
   const error = useWorkbenchStore((state) => state.error);
   const bootstrapped = useWorkbenchStore((state) => state.bootstrapped);
   const activeArtifact = useWorkbenchStore((state) => state.activeArtifact);
+  const activeConversationId = useWorkbenchStore((state) => state.activeConversationId);
+  const selectConversation = useWorkbenchStore((state) => state.selectConversation);
   const startNewConversation = useWorkbenchStore((state) => state.startNewConversation);
-  const [canvasOnLeft, toggleCanvasOnLeft] = useCanvasOnLeft();
+  const [canvasOnLeft] = useCanvasOnLeft();
   const [newSpecOpen, setNewSpecOpen] = useState(false);
+  const [sidebarCollapsed, toggleSidebarCollapsed] = useSidebarCollapsed();
   useAutosave();
   useAutoVerifyCitations();
   useErrorToasts();
@@ -4035,60 +4469,43 @@ function App() {
   const showWorkpad = Boolean(activeArtifact);
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar />
-      <main className="flex-1 overflow-auto px-4 py-4 sm:px-6 sm:py-6">
+    <div className="flex h-screen overflow-hidden bg-shell-0">
+      <Sidebar collapsed={sidebarCollapsed} />
+      <main className="flex-1 overflow-auto">
         {!bootstrapped && status === "loading" ? (
           <div className="flex min-h-[80vh] items-center justify-center">
-            <div className="glass-button">
-              <LoaderCircle className="animate-spin" size={16} />
+            <div className="inline-flex items-center gap-2 rounded-md border border-shell-border bg-shell-1 px-4 py-2 font-mono text-[12px] text-ink-2">
+              <LoaderCircle className="animate-spin" size={14} />
               Loading workspace…
             </div>
           </div>
         ) : (
-          <div className="mx-auto h-[calc(100vh-2rem)] max-w-[1680px]">
+          <div className="mx-auto flex h-full max-w-[1680px] flex-col">
+            <AppHeader
+              showWorkpad={showWorkpad}
+              activeTitle={activeArtifact?.title ?? null}
+              onNewSpec={() => setNewSpecOpen(true)}
+              sidebarCollapsed={sidebarCollapsed}
+              onToggleSidebar={toggleSidebarCollapsed}
+            />
+            <div className="flex-1 overflow-hidden px-4 pb-4 sm:px-6 sm:pb-6">
             {!showWorkpad ? (
-              <div className="flex h-full flex-col gap-6">
-                <div className="flex items-center justify-between px-2 pt-2">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                      <MessageSquareText size={20} className="text-sky-200" />
-                    </div>
-                    <div>
-                      <div className="text-xs uppercase tracking-[0.24em] text-slate-500">Chat Workspace</div>
-                      <div className="mt-1 text-lg font-semibold text-slate-50">Workpad AI</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setNewSpecOpen(true)}
-                      className="glass-button"
-                    >
-                      <NotebookPen size={16} />
-                      New RFC
-                    </button>
-                    <button type="button" onClick={() => void startNewConversation()} className="glass-button">
-                      <Plus size={16} />
-                      New thread
-                    </button>
-                  </div>
-                </div>
-
-                {messages.length === 0 ? (
-                  <div className="flex flex-1 items-center justify-center">
-                    <div className="w-full text-center">
-                      <p className="mb-6 text-sm uppercase tracking-[0.3em] text-slate-500">Modern AI Work Surface</p>
-                      <h1 className="mx-auto max-w-3xl text-4xl font-semibold tracking-tight text-slate-50 sm:text-6xl">
-                        What should we draft, edit, or build today?
-                      </h1>
-                      <p className="mx-auto mt-6 max-w-2xl text-base leading-8 text-slate-400">
-                        Chat stays conversational. The workpad opens the moment the response deserves to persist.
-                      </p>
-                      <div className="mt-10">
-                        <ChatComposer centered />
-                      </div>
-                    </div>
+              <div className="flex h-full flex-col gap-4">
+                {messages.length === 0 && !activeConversationId ? (
+                  <div className="flex-1 overflow-auto">
+                    <LibraryHome
+                      onOpen={(a: ArtifactListItem) => {
+                        void selectConversation(a.conversation_id);
+                      }}
+                      onNew={() => void startNewConversation()}
+                      onDraftAI={() => setNewSpecOpen(true)}
+                      onContinueLast={() => {
+                        const latest = useWorkbenchStore
+                          .getState()
+                          .conversations.find((c) => !c.archived_at);
+                        if (latest) void selectConversation(latest.id);
+                      }}
+                    />
                   </div>
                 ) : (
                   <>
@@ -4107,47 +4524,45 @@ function App() {
                   </Panel>
                 );
                 const chatPanel = (
-                  <Panel key="chat" order={canvasOnLeft ? 2 : 1} defaultSize={34} minSize={28}>
-                    <div className="flex h-full flex-col gap-4">
-                      <div className="panel-shell flex-1 overflow-hidden p-5">
-                        <div className="flex h-full flex-col">
-                          <div className="mb-4 flex items-center justify-between">
-                            <div className="text-lg font-semibold text-slate-50">Chat</div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={toggleCanvasOnLeft}
-                                title={canvasOnLeft ? "Move canvas to the right" : "Move canvas to the left"}
-                                aria-label={canvasOnLeft ? "Move canvas to the right" : "Move canvas to the left"}
-                                className="glass-button !px-3"
-                              >
-                                <ArrowLeftRight size={16} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setNewSpecOpen(true)}
-                                title="New RFC"
-                                aria-label="New RFC"
-                                className="glass-button !px-3"
-                              >
-                                <NotebookPen size={16} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void startNewConversation()}
-                                title="New thread"
-                                aria-label="New thread"
-                                className="glass-button !px-3"
-                              >
-                                <Plus size={16} />
-                              </button>
-                            </div>
-                          </div>
-                          <ChatScrollRegion />
+                  <Panel key="chat" order={1} defaultSize={38} minSize={28}>
+                    <aside className="flex h-full min-h-0 flex-col border-r border-shell-border bg-shell-0">
+                      <div className="flex flex-none items-center gap-2 border-b border-shell-border px-3.5 py-2.5">
+                        <span className="text-[13px] font-semibold text-ink-1">Chat</span>
+                        <span className="inline-flex items-center rounded-full border border-shell-border-strong bg-shell-2 px-2 py-0.5 font-mono text-[10px] text-ink-2">
+                          thread
+                        </span>
+                        <div className="ml-auto flex items-center gap-0.5">
+                          <ChatHeaderIcon
+                            title="History"
+                            onClick={() => {}}
+                          >
+                            <History size={14} />
+                          </ChatHeaderIcon>
+                          <ChatHeaderIcon
+                            title="Share"
+                            onClick={() => {}}
+                          >
+                            <Share2 size={14} />
+                          </ChatHeaderIcon>
+                          <ChatHeaderIcon
+                            title="New thread"
+                            onClick={() => void startNewConversation()}
+                          >
+                            <Plus size={14} />
+                          </ChatHeaderIcon>
+                          <ChatHeaderIcon
+                            title="New RFC from sources"
+                            onClick={() => setNewSpecOpen(true)}
+                          >
+                            <NotebookPen size={14} />
+                          </ChatHeaderIcon>
                         </div>
                       </div>
+                      <div className="flex-1 overflow-hidden">
+                        <ChatScrollRegion />
+                      </div>
                       <ChatComposer />
-                    </div>
+                    </aside>
                   </Panel>
                 );
                 const panels = canvasOnLeft ? [canvasPanel, chatPanel] : [chatPanel, canvasPanel];
@@ -4159,22 +4574,23 @@ function App() {
                   >
                     {panels[0]}
                     <PanelResizeHandle className="relative hidden w-3 shrink-0 lg:block">
-                      <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full bg-white/10" />
+                      <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full bg-shell-2" />
                     </PanelResizeHandle>
                     {panels[1]}
                   </PanelGroup>
                 );
               })()
             )}
+            </div>
             {error ? (
-              <div className="pointer-events-none fixed bottom-5 right-5 max-w-sm rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+              <div className="pointer-events-none fixed bottom-5 right-5 z-40 max-w-sm rounded-lg border border-state-missing/30 bg-state-missing-soft px-4 py-3 text-[12.5px] text-state-missing-ink shadow-panel">
                 {error}
               </div>
             ) : null}
             {status === "streaming" ? (
-              <div className="pointer-events-none fixed bottom-5 left-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/40 px-4 py-2 text-xs uppercase tracking-[0.22em] text-slate-300 backdrop-blur-xl">
-                <LoaderCircle className="animate-spin" size={14} />
-                Streaming
+              <div className="pointer-events-none fixed bottom-5 left-5 z-40 inline-flex items-center gap-2 rounded-full border border-shell-border bg-shell-1 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-2 shadow-panel">
+                <LoaderCircle className="animate-spin" size={12} />
+                streaming
               </div>
             ) : null}
           </div>
