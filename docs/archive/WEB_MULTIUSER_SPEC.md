@@ -1,5 +1,7 @@
 # Workpad AI — Web Multi-User Spec
 
+> **Archived 2026-04-22.** Superseded by `docs/V1_SPEC.md` (consolidated v1). Kept for historical context — the multi-user framing carried forward, but the consolidated spec drops the workspace layer in favor of projects-as-top-level and scopes to 2–10 person teams.
+
 > Workspace-first engineering memory for teams, built on top of the current RFC and citation substrate.
 
 This document replaces the single-user personal-MVP direction as the current product target.

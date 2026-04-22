@@ -1,5 +1,7 @@
 # Workpad AI — Personal MVP Spec
 
+> **Archived 2026-04-22.** Superseded by `docs/V1_SPEC.md` (consolidated v1). Kept for historical context — the library-first framing and normalized source/citation model here carried forward.
+
 > Library-first engineering memory built on top of the current RFC wedge.
 
 This document translates the broader personal-MVP idea into a repo-specific build plan.
