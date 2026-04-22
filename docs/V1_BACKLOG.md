@@ -46,15 +46,15 @@ Broken into substeps 1A–1F that can be landed and tested independently. Items 
 
 ### 1D — Scope pads + conversations to projects
 
-- [ ] Add nullable `project_id` FK to `Pad` and `Conversation`.
-- [ ] Migration: group existing pads + conversations by `Conversation.owner_id`; for each distinct owner, create a project named `"Personal"` (owner = that user) and assign the rows to it. For pads whose conversation was deleted (orphans), leave `project_id` NULL — they surface later as an admin repair task.
-- [ ] After migration, flip `project_id` to `NOT NULL` for newly-created rows (enforce in the service layer; schema migration to `NOT NULL` can wait until orphan handling).
-- [ ] Add a `require_project_member(project_id)` dependency. All pad/conversation list + detail + mutate endpoints use it.
-- [ ] Update `list_library_artifacts` and conversation/pad detail queries to filter by `project_id` in addition to (or in place of) owner.
-- [ ] Library response payloads include `project_id` so the frontend can cache-key correctly.
-- [ ] Tests: cross-project isolation (user B in project X can't read pads from project Y); backfill idempotency.
+- [x] Add nullable `project_id` FK to `Pad` (Artifact) and `Conversation`; SQLite ALTER + index in `_ensure_*_schema`. *Commit `5ce6f3b`.*
+- [x] One-shot backfill on startup: group existing pads + conversations by owner; create a `"Personal"` project per owner and assign their rows to it. Orphan owner_ids (user deleted) and orphan artifacts (conversation deleted) stay with `project_id=NULL` and out of the library. *Commit `4d6d3a9`.*
+- [x] Backfill is idempotent — selects only rows whose `project_id` is still NULL; safe to call every boot. *Commit `4d6d3a9`.*
+- [x] Enforce `project_id` at the service layer on new pads/conversations via helper guards `_require_project_member_or_403`, `_require_artifact_access`, `_require_conversation_access` in `main.py`. *Commit `5b882dc`.*
+- [x] `list_library_artifacts` and `list_conversations` filter by `project_id`; endpoint-level membership check replaces the old owner_id filter. All pad/conversation list + detail + mutate endpoints routed through the guards. *Commit `5b882dc`.*
+- [x] `project_id` carried on `Artifact` rows (denormalized) and exposed via existing list/detail payloads.
+- [x] Tests: backfill idempotency + orphan handling (6 tests in `test_projects_backfill.py`, commit `4d6d3a9`). Cross-project isolation (8 tests in `test_project_isolation.py`, commit `8e337f0`): non-member 403s on every pad/conversation endpoint, create-time validation (foreign project_id 403, cross-project conversation attach 400), list-endpoint query contract, happy-path invited-member access.
 
-**Exit:** Existing local DB loads after migration with all pads under a per-user "Personal" project. Attempting to read a pad whose project you don't belong to returns 403.
+**Exit:** Existing local DB loads after migration with all pads under a per-user "Personal" project. Attempting to read a pad whose project you don't belong to returns 403. Test suite is 90 green (was 75 before Phase 1D).
 
 ### 1E — Frontend auth pages wired to backend
 
