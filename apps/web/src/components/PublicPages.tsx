@@ -6,11 +6,13 @@
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, Github, LoaderCircle } from "lucide-react";
 import {
+  acceptInvite,
   confirmPasswordReset,
   requestPasswordReset,
   signIn,
   signUp,
   type AuthUser,
+  type ProjectSummary,
 } from "../lib/auth";
 
 type Route = "marketing" | "signin" | "signup" | "forgot";
@@ -740,6 +742,201 @@ function ResetConfirmView({
         Back to sign in
       </button>
     </form>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Invite-accept page — reached via #/invite?token=... from an email/log.
+// Requires a signed-in caller; anonymous visitors see a prompt to sign up
+// or sign in that preserves the token through the redirect.
+// ---------------------------------------------------------------------------
+export function InviteAcceptPage({
+  token,
+  user,
+  nav,
+}: {
+  token: string | null;
+  user: AuthUser | null;
+  nav: (route: "signin" | "signup" | "marketing" | "app" | "forgot") => void;
+}) {
+  return (
+    <div className="grid min-h-screen bg-shell-0 md:grid-cols-2">
+      <div className="flex min-h-screen flex-col px-8 py-8 sm:px-12">
+        <a
+          href="#/marketing"
+          onClick={(e) => {
+            e.preventDefault();
+            nav("marketing");
+          }}
+        >
+          <Wordmark />
+        </a>
+        <div className="mx-auto flex w-full max-w-[420px] flex-1 flex-col justify-center">
+          <InviteAcceptView token={token} user={user} nav={nav} />
+        </div>
+        <div className="flex justify-between font-mono text-[11px] text-ink-3">
+          <span>© 2026 Workpad AI</span>
+          <span>Invites expire in 14d</span>
+        </div>
+      </div>
+      <AuthManifest />
+    </div>
+  );
+}
+
+function InviteAcceptView({
+  token,
+  user,
+  nav,
+}: {
+  token: string | null;
+  user: AuthUser | null;
+  nav: (route: "signin" | "signup" | "app" | "forgot" | "marketing") => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [accepted, setAccepted] = useState<ProjectSummary | null>(null);
+
+  if (!token) {
+    return (
+      <div className="flex flex-col gap-3.5">
+        <div className="wp-overline mb-3">Invite link</div>
+        <h1
+          className="m-0 font-serif font-medium text-ink-1"
+          style={{ fontSize: 36, letterSpacing: "-0.02em" }}
+        >
+          This link is incomplete.
+        </h1>
+        <p className="mb-4 text-ink-2">
+          Ask whoever sent it to share the full URL — it should end with{" "}
+          <code className="font-mono text-ink-1">?token=…</code>.
+        </p>
+        <button
+          type="button"
+          onClick={() => nav("marketing")}
+          className="inline-flex items-center gap-2 self-start rounded-md border border-shell-border-strong bg-shell-1 px-4 py-2.5 text-[14px] font-medium text-ink-1 transition hover:bg-shell-2"
+        >
+          <ArrowLeft size={14} />
+          Back
+        </button>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col gap-3.5">
+        <div className="wp-overline mb-3">You've been invited</div>
+        <h1
+          className="m-0 font-serif font-medium text-ink-1"
+          style={{ fontSize: 36, letterSpacing: "-0.02em" }}
+        >
+          Sign in to accept.
+        </h1>
+        <p className="mb-4 text-ink-2">
+          Workpad invites are tied to a signed-in account. After you sign in (or
+          sign up) you'll be dropped straight into the project.
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => nav("signup")}
+            className="inline-flex items-center gap-2 rounded-md bg-ink-1 px-4 py-2.5 text-[14px] font-medium text-white transition hover:bg-black"
+          >
+            Create an account
+            <ArrowRight size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => nav("signin")}
+            className="inline-flex items-center gap-2 rounded-md border border-shell-border-strong bg-shell-1 px-4 py-2.5 text-[14px] font-medium text-ink-1 transition hover:bg-shell-2"
+          >
+            I have an account
+          </button>
+        </div>
+        <p className="mt-4 font-mono text-[11px] text-ink-3">
+          The invite token stays in the URL while you sign in.
+        </p>
+      </div>
+    );
+  }
+
+  if (accepted) {
+    return (
+      <div className="flex flex-col gap-3.5">
+        <div className="wp-overline mb-3">You're in</div>
+        <h1
+          className="m-0 font-serif font-medium text-ink-1"
+          style={{ fontSize: 36, letterSpacing: "-0.02em" }}
+        >
+          Welcome to {accepted.name}.
+        </h1>
+        <p className="mb-4 text-ink-2">
+          You joined as a {accepted.role}. Take a look around — anything anyone
+          on the project has written is visible to you.
+        </p>
+        <button
+          type="button"
+          onClick={() => nav("app")}
+          className="inline-flex items-center gap-2 self-start rounded-md bg-ink-1 px-4 py-2.5 text-[14px] font-medium text-white transition hover:bg-black"
+        >
+          Open the project
+          <ArrowRight size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3.5">
+      <div className="wp-overline mb-3">You've been invited</div>
+      <h1
+        className="m-0 font-serif font-medium text-ink-1"
+        style={{ fontSize: 36, letterSpacing: "-0.02em" }}
+      >
+        Accept the invite.
+      </h1>
+      <p className="mb-4 text-ink-2">
+        You're signed in as{" "}
+        <span className="font-mono text-ink-1">{user.email}</span>. Accepting
+        will add you as a member of the project.
+      </p>
+      <ErrorBanner message={error} />
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={async () => {
+            if (busy) return;
+            setBusy(true);
+            setError(null);
+            try {
+              const project = await acceptInvite(token);
+              setAccepted(project);
+            } catch (err) {
+              setError(
+                err instanceof Error ? err.message : "Could not accept the invite.",
+              );
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="inline-flex items-center gap-2 rounded-md bg-ink-1 px-4 py-2.5 text-[14px] font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? <LoaderCircle size={14} className="animate-spin" /> : null}
+          Accept invite
+          {!busy ? <ArrowRight size={14} /> : null}
+        </button>
+        <button
+          type="button"
+          onClick={() => nav("app")}
+          className="inline-flex items-center gap-2 rounded-md border border-shell-border-strong bg-shell-1 px-4 py-2.5 text-[14px] font-medium text-ink-1 transition hover:bg-shell-2"
+        >
+          Not now
+        </button>
+      </div>
+    </div>
   );
 }
 

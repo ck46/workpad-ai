@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import {
   AuthPage,
+  InviteAcceptPage,
   MarketingPage,
   ResetConfirmPage,
 } from "./components/PublicPages";
@@ -158,6 +159,26 @@ function Root() {
     return (
       <AuthContext.Provider value={{ user, setUser, signOut }}>
         <ResetConfirmPage token={token} nav={nav} />
+      </AuthContext.Provider>
+    );
+  }
+
+  // Invite-accept is also a deep-link but it requires a signed-in user —
+  // the project membership row gets attached to whoever's cookie the
+  // backend sees. If the visitor isn't signed in, bounce to signup first
+  // and preserve the token so InviteAcceptPage can pick it back up post-
+  // auth.
+  if (route === "invite") {
+    if (!user) {
+      return (
+        <AuthContext.Provider value={{ user, setUser, signOut }}>
+          <InviteAcceptPage token={token} user={null} nav={nav} />
+        </AuthContext.Provider>
+      );
+    }
+    return (
+      <AuthContext.Provider value={{ user, setUser, signOut }}>
+        <InviteAcceptPage token={token} user={user} nav={nav} />
       </AuthContext.Provider>
     );
   }
