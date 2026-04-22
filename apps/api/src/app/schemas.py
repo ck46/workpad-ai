@@ -21,6 +21,19 @@ class SpecType(StrEnum):
     RFC = "rfc"
 
 
+class ArtifactType(StrEnum):
+    RFC = "rfc"
+    ADR = "adr"
+    DESIGN_NOTE = "design_note"
+    RUN_NOTE = "run_note"
+
+
+class ArtifactStatus(StrEnum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
 class CitationKind(StrEnum):
     REPO_RANGE = "repo_range"
     REPO_PR = "repo_pr"
@@ -51,13 +64,33 @@ class MessageRead(BaseModel):
 class ArtifactRead(BaseModel):
     id: str
     conversation_id: str
+    origin_conversation_id: str | None = None
     title: str
     content: str
     content_type: ContentType
     version: int
+    artifact_type: ArtifactType | None = None
     updated_at: datetime
+    last_opened_at: datetime | None = None
+    summary: str = ""
+    status: ArtifactStatus = ArtifactStatus.DRAFT
     spec_type: SpecType | None = None
     citations: list[CitationRead] = []
+
+
+class ArtifactListItem(BaseModel):
+    id: str
+    conversation_id: str
+    origin_conversation_id: str | None = None
+    title: str
+    content_type: ContentType
+    version: int
+    artifact_type: ArtifactType | None = None
+    updated_at: datetime
+    last_opened_at: datetime | None = None
+    summary: str = ""
+    status: ArtifactStatus = ArtifactStatus.DRAFT
+    spec_type: SpecType | None = None
 
 
 class ConversationSummary(BaseModel):
@@ -117,6 +150,19 @@ class ArtifactUpdateRequest(BaseModel):
     content: str = Field(max_length=500_000)
     content_type: ContentType
     expected_version: int | None = None
+    artifact_type: ArtifactType | None = None
+    status: ArtifactStatus | None = None
+    summary: str | None = Field(default=None, max_length=4_000)
+
+
+class LibraryArtifactCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=240)
+    content: str = Field(default="", max_length=500_000)
+    content_type: ContentType = ContentType.MARKDOWN
+    artifact_type: ArtifactType
+    status: ArtifactStatus = ArtifactStatus.DRAFT
+    summary: str = Field(default="", max_length=4_000)
+    conversation_id: str | None = None
 
 
 class SearchReplacePatch(BaseModel):
@@ -191,3 +237,24 @@ class VerifyCitationsResult(BaseModel):
     truncated: bool
     remaining: int
     citations: list[CitationRead]
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+class SignUpRequest(BaseModel):
+    email: str
+    password: str
+    name: str = ""
+
+
+class SignInRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserRead(BaseModel):
+    id: str
+    email: str
+    name: str
+    created_at: datetime

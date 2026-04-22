@@ -13,10 +13,23 @@ from uuid import uuid4
 
 from markdown import markdown
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, create_engine, func, select
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint, create_engine, func, or_, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
-from .schemas import ArtifactRead, ArtifactUpdateRequest, CanvasToolCall, CitationRead, ContentType, ConversationDetail, ConversationSummary, MessageRead
+from .schemas import (
+    ArtifactListItem,
+    ArtifactRead,
+    ArtifactStatus,
+    ArtifactType,
+    ArtifactUpdateRequest,
+    CanvasToolCall,
+    CitationRead,
+    ContentType,
+    ConversationDetail,
+    ConversationSummary,
+    LibraryArtifactCreateRequest,
+    MessageRead,
+)
 
 
 def utcnow() -> datetime:
@@ -56,6 +69,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None, index=True)
     title: Mapped[str] = mapped_column(String(240), default="New workpad")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -86,6 +100,11 @@ class Artifact(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     content_type: Mapped[str] = mapped_column(String(32), default=ContentType.MARKDOWN.value)
     spec_type: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    artifact_type: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    status: Mapped[str] = mapped_column(String(16), default=ArtifactStatus.DRAFT.value)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    last_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    origin_conversation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -170,6 +189,11 @@ def get_session_factory():
 
 
 def init_db() -> None:
+    # Import so the auth tables are registered on Base.metadata before
+    # create_all runs. Keeping the import here avoids a circular import at
+    # module load time (auth imports from core).
+    from . import auth as _auth  # noqa: F401
+
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     _ensure_conversation_schema(engine)
@@ -186,6 +210,11 @@ def _ensure_conversation_schema(engine) -> None:
         }
         if "archived_at" not in columns:
             connection.exec_driver_sql("ALTER TABLE conversations ADD COLUMN archived_at DATETIME")
+        if "owner_id" not in columns:
+            connection.exec_driver_sql("ALTER TABLE conversations ADD COLUMN owner_id VARCHAR(36)")
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_conversations_owner_id ON conversations(owner_id)"
+            )
 
 
 def _ensure_artifact_schema(engine) -> None:
@@ -198,6 +227,28 @@ def _ensure_artifact_schema(engine) -> None:
         }
         if "spec_type" not in columns:
             connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN spec_type VARCHAR(32)")
+        if "artifact_type" not in columns:
+            connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN artifact_type VARCHAR(32)")
+        if "status" not in columns:
+            connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'draft'")
+        if "summary" not in columns:
+            connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
+        if "last_opened_at" not in columns:
+            connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN last_opened_at DATETIME")
+        if "origin_conversation_id" not in columns:
+            connection.exec_driver_sql("ALTER TABLE artifacts ADD COLUMN origin_conversation_id VARCHAR(36)")
+        connection.exec_driver_sql(
+            "UPDATE artifacts SET artifact_type = spec_type "
+            "WHERE artifact_type IS NULL AND spec_type IS NOT NULL"
+        )
+        connection.exec_driver_sql(
+            "UPDATE artifacts SET origin_conversation_id = conversation_id "
+            "WHERE origin_conversation_id IS NULL"
+        )
+        connection.exec_driver_sql(
+            "UPDATE artifacts SET status = 'active' "
+            "WHERE spec_type IS NOT NULL AND (status IS NULL OR status = '' OR status = 'draft')"
+        )
 
 
 def serialize_conversation(conversation: Conversation, session: Session) -> ConversationSummary:
@@ -243,6 +294,18 @@ def serialize_citation(citation: Citation) -> CitationRead:
     )
 
 
+def _artifact_type_value(artifact: Artifact) -> str | None:
+    return artifact.artifact_type or artifact.spec_type
+
+
+def _artifact_status_value(artifact: Artifact) -> str:
+    if artifact.status:
+        return artifact.status
+    if artifact.spec_type:
+        return ArtifactStatus.ACTIVE.value
+    return ArtifactStatus.DRAFT.value
+
+
 def serialize_artifact(artifact: Artifact, session: Session | None = None) -> ArtifactRead:
     citations: list[CitationRead] = []
     if session is not None:
@@ -253,22 +316,91 @@ def serialize_artifact(artifact: Artifact, session: Session | None = None) -> Ar
     return ArtifactRead(
         id=artifact.id,
         conversation_id=artifact.conversation_id,
+        origin_conversation_id=artifact.origin_conversation_id,
         title=artifact.title,
         content=artifact.content,
         content_type=artifact.content_type,
         version=artifact.version,
+        artifact_type=_artifact_type_value(artifact),
         updated_at=artifact.updated_at,
+        last_opened_at=artifact.last_opened_at,
+        summary=artifact.summary or "",
+        status=_artifact_status_value(artifact),
         spec_type=artifact.spec_type,
         citations=citations,
     )
 
 
-def list_conversations(session: Session, *, include_archived: bool = False) -> list[ConversationSummary]:
+def serialize_artifact_list_item(artifact: Artifact) -> ArtifactListItem:
+    return ArtifactListItem(
+        id=artifact.id,
+        conversation_id=artifact.conversation_id,
+        origin_conversation_id=artifact.origin_conversation_id,
+        title=artifact.title,
+        content_type=artifact.content_type,
+        version=artifact.version,
+        artifact_type=_artifact_type_value(artifact),
+        updated_at=artifact.updated_at,
+        last_opened_at=artifact.last_opened_at,
+        summary=artifact.summary or "",
+        status=_artifact_status_value(artifact),
+        spec_type=artifact.spec_type,
+    )
+
+
+def list_conversations(
+    session: Session,
+    *,
+    include_archived: bool = False,
+    owner_id: str | None = None,
+) -> list[ConversationSummary]:
     query = select(Conversation).order_by(Conversation.updated_at.desc())
     if not include_archived:
         query = query.where(Conversation.archived_at.is_(None))
+    if owner_id is not None:
+        query = query.where(Conversation.owner_id == owner_id)
     conversations = session.scalars(query).all()
     return [serialize_conversation(item, session) for item in conversations]
+
+
+def list_library_artifacts(
+    session: Session,
+    *,
+    artifact_type: str | None = None,
+    status: str | None = None,
+    query_text: str | None = None,
+    limit: int = 100,
+    owner_id: str | None = None,
+) -> list[ArtifactListItem]:
+    stmt = select(Artifact)
+
+    if owner_id is not None:
+        stmt = stmt.join(Conversation, Artifact.conversation_id == Conversation.id).where(
+            Conversation.owner_id == owner_id
+        )
+
+    if artifact_type:
+        stmt = stmt.where(
+            or_(
+                Artifact.artifact_type == artifact_type,
+                Artifact.spec_type == artifact_type,
+            )
+        )
+    if status:
+        stmt = stmt.where(Artifact.status == status)
+    if query_text:
+        pattern = f"%{query_text.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(Artifact.title).like(pattern),
+                func.lower(Artifact.content).like(pattern),
+                func.lower(Artifact.summary).like(pattern),
+            )
+        )
+
+    capped_limit = min(max(limit, 1), 200)
+    artifacts = session.scalars(stmt.order_by(Artifact.updated_at.desc()).limit(capped_limit)).all()
+    return [serialize_artifact_list_item(item) for item in artifacts]
 
 
 def archive_conversation(session: Session, conversation_id: str) -> Conversation:
@@ -297,24 +429,41 @@ def delete_conversation(session: Session, conversation_id: str) -> None:
     session.commit()
 
 
-def create_conversation(session: Session, seed_title: str | None = None) -> Conversation:
+def create_conversation(
+    session: Session,
+    seed_title: str | None = None,
+    *,
+    owner_id: str | None = None,
+) -> Conversation:
     title = (seed_title or "New workpad").strip() or "New workpad"
-    conversation = Conversation(title=title[:240])
+    conversation = Conversation(title=title[:240], owner_id=owner_id)
     session.add(conversation)
     session.commit()
     session.refresh(conversation)
     return conversation
 
 
-def get_conversation_or_404(session: Session, conversation_id: str) -> Conversation:
+def get_conversation_or_404(
+    session: Session,
+    conversation_id: str,
+    *,
+    owner_id: str | None = None,
+) -> Conversation:
     conversation = session.get(Conversation, conversation_id)
     if conversation is None:
+        raise ValueError("Conversation not found")
+    if owner_id is not None and conversation.owner_id not in (None, owner_id):
         raise ValueError("Conversation not found")
     return conversation
 
 
-def get_conversation_detail(session: Session, conversation_id: str) -> ConversationDetail:
-    conversation = get_conversation_or_404(session, conversation_id)
+def get_conversation_detail(
+    session: Session,
+    conversation_id: str,
+    *,
+    owner_id: str | None = None,
+) -> ConversationDetail:
+    conversation = get_conversation_or_404(session, conversation_id, owner_id=owner_id)
     messages = session.scalars(select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at.asc())).all()
     artifacts = session.scalars(select(Artifact).where(Artifact.conversation_id == conversation_id).order_by(Artifact.updated_at.desc())).all()
     active_artifact_id = artifacts[0].id if artifacts else None
@@ -440,6 +589,7 @@ def apply_canvas_tool(
     if artifact is None:
         artifact = Artifact(
             conversation_id=conversation.id,
+            origin_conversation_id=conversation.id,
             title=tool_call.title,
             content="",
             content_type=tool_call.content_type.value,
@@ -457,6 +607,10 @@ def apply_canvas_tool(
     artifact.title = tool_call.title[:240]
     artifact.content = next_content
     artifact.content_type = tool_call.content_type.value
+    artifact.artifact_type = artifact.artifact_type or artifact.spec_type
+    artifact.summary = artifact.summary or ""
+    artifact.status = artifact.status or ArtifactStatus.DRAFT.value
+    artifact.origin_conversation_id = artifact.origin_conversation_id or conversation.id
     artifact.version += 1
     artifact.updated_at = utcnow()
     conversation.updated_at = utcnow()
@@ -469,16 +623,34 @@ def apply_canvas_tool(
     return ArtifactMutationResult(artifact=artifact, summary=tool_call.summary, action=tool_call.action)
 
 
-def update_artifact_manually(session: Session, artifact_id: str, payload: ArtifactUpdateRequest) -> ArtifactRead:
-    artifact = session.get(Artifact, artifact_id)
-    if artifact is None:
-        raise ValueError("Artifact not found")
+def update_artifact_manually(
+    session: Session,
+    artifact_id: str,
+    payload: ArtifactUpdateRequest,
+    *,
+    owner_id: str | None = None,
+) -> ArtifactRead:
+    artifact = get_artifact_or_404(session, artifact_id, owner_id=owner_id)
     if payload.expected_version and artifact.version != payload.expected_version:
         raise ValueError("Artifact version mismatch")
 
     artifact.title = payload.title[:240]
     artifact.content = payload.content
     artifact.content_type = payload.content_type.value
+    if payload.artifact_type is not None:
+        artifact.artifact_type = payload.artifact_type.value
+        artifact.spec_type = payload.artifact_type.value if payload.artifact_type == ArtifactType.RFC else None
+    elif artifact.artifact_type is None and artifact.spec_type is not None:
+        artifact.artifact_type = artifact.spec_type
+    if payload.status is not None:
+        artifact.status = payload.status.value
+    elif not artifact.status:
+        artifact.status = ArtifactStatus.DRAFT.value
+    if payload.summary is not None:
+        artifact.summary = payload.summary.strip()
+    elif artifact.summary is None:
+        artifact.summary = ""
+    artifact.origin_conversation_id = artifact.origin_conversation_id or artifact.conversation_id
     artifact.version += 1
     artifact.updated_at = utcnow()
     artifact.conversation.updated_at = utcnow()
@@ -488,11 +660,154 @@ def update_artifact_manually(session: Session, artifact_id: str, payload: Artifa
     return serialize_artifact(artifact, session)
 
 
-def get_artifact_or_404(session: Session, artifact_id: str) -> Artifact:
+def create_library_artifact(
+    session: Session,
+    payload: LibraryArtifactCreateRequest,
+    *,
+    owner_id: str | None = None,
+) -> ArtifactRead:
+    if payload.conversation_id:
+        conversation = get_conversation_or_404(session, payload.conversation_id, owner_id=owner_id)
+    else:
+        conversation = Conversation(title=payload.title[:240], owner_id=owner_id)
+        session.add(conversation)
+        session.flush()
+
+    artifact = Artifact(
+        conversation_id=conversation.id,
+        origin_conversation_id=conversation.id,
+        title=payload.title[:240],
+        content=payload.content,
+        content_type=payload.content_type.value,
+        spec_type=payload.artifact_type.value if payload.artifact_type == ArtifactType.RFC else None,
+        artifact_type=payload.artifact_type.value,
+        status=payload.status.value,
+        summary=payload.summary.strip(),
+        version=1,
+    )
+    session.add(artifact)
+    session.flush()
+
+    _record_artifact_version(session, artifact, "Created from the artifact library.")
+    conversation.updated_at = utcnow()
+    session.commit()
+    session.refresh(artifact)
+    return serialize_artifact(artifact, session)
+
+
+def get_artifact_or_404(
+    session: Session,
+    artifact_id: str,
+    *,
+    owner_id: str | None = None,
+) -> Artifact:
     artifact = session.get(Artifact, artifact_id)
     if artifact is None:
         raise ValueError("Artifact not found")
+    if owner_id is not None:
+        owner = artifact.conversation.owner_id if artifact.conversation else None
+        if owner not in (None, owner_id):
+            raise ValueError("Artifact not found")
     return artifact
+
+
+def get_artifact_detail(
+    session: Session,
+    artifact_id: str,
+    *,
+    mark_opened: bool = False,
+    owner_id: str | None = None,
+) -> ArtifactRead:
+    artifact = get_artifact_or_404(session, artifact_id, owner_id=owner_id)
+    if mark_opened:
+        artifact.last_opened_at = utcnow()
+        session.commit()
+        session.refresh(artifact)
+    return serialize_artifact(artifact, session)
+
+
+def get_artifact_diff(
+    session: Session,
+    artifact_id: str,
+    *,
+    from_version: int | None = None,
+    to_version: int | None = None,
+    owner_id: str | None = None,
+) -> dict[str, Any]:
+    """Unified diff between two snapshots of an artifact.
+
+    Defaults: diff the most recent two versions. Used by the editor's "Diff"
+    mode so the user can see exactly what an AI edit changed.
+    """
+
+    import difflib
+
+    artifact = get_artifact_or_404(session, artifact_id, owner_id=owner_id)
+
+    versions = list(
+        session.scalars(
+            select(ArtifactVersion)
+            .where(ArtifactVersion.artifact_id == artifact_id)
+            .order_by(ArtifactVersion.version.asc())
+        ).all()
+    )
+
+    if to_version is None:
+        to_version = versions[-1].version if versions else artifact.version
+    if from_version is None:
+        # Default: previous version if available, else 0 (empty → current).
+        prev_candidates = [v.version for v in versions if v.version < to_version]
+        from_version = prev_candidates[-1] if prev_candidates else 0
+
+    def body_for(version_num: int) -> tuple[str, str]:
+        if version_num <= 0:
+            return ("", "")
+        match = next((v for v in versions if v.version == version_num), None)
+        if match is not None:
+            return (match.content or "", match.title or "")
+        if artifact.version == version_num:
+            return (artifact.content or "", artifact.title or "")
+        raise ValueError(f"Artifact version {version_num} not found")
+
+    from_content, from_title = body_for(from_version)
+    to_content, to_title = body_for(to_version)
+
+    from_lines = from_content.splitlines(keepends=False)
+    to_lines = to_content.splitlines(keepends=False)
+    unified = "\n".join(
+        difflib.unified_diff(
+            from_lines,
+            to_lines,
+            fromfile=f"v{from_version}",
+            tofile=f"v{to_version}",
+            lineterm="",
+        )
+    )
+
+    added = sum(
+        1
+        for line in unified.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+    removed = sum(
+        1
+        for line in unified.splitlines()
+        if line.startswith("-") and not line.startswith("---")
+    )
+
+    return {
+        "artifact_id": artifact_id,
+        "from_version": from_version,
+        "to_version": to_version,
+        "from_title": from_title,
+        "to_title": to_title,
+        "unified_diff": unified,
+        "added_lines": added,
+        "removed_lines": removed,
+        "available_versions": [v.version for v in versions] + (
+            [artifact.version] if artifact.version not in [v.version for v in versions] else []
+        ),
+    }
 
 
 def _safe_filename(name: str) -> str:
