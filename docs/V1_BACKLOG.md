@@ -130,9 +130,9 @@ The marketing + signin/signup/forgot UI already existed in `apps/web/src/compone
 - [ ] Size caps: 20 MB images, 50 MB files, 200 MB folder zip.
 
 ### Source endpoints
-- [ ] `POST /api/projects/{id}/sources` — create source from upload IDs, URL, or paste.
-- [ ] `GET /api/projects/{id}/sources`.
-- [ ] `GET /api/sources/{id}` (access check via project membership).
+- [x] `POST /api/projects/{id}/sources` — create from URL (repo) or paste (transcript, note). Repo + transcript dedupe on `(project_id, kind, canonical_key)`; response carries a `created` flag. File/image kinds are rejected at the request-model level until the Stream B upload pipeline lands. *Commit `35fe756`.*
+- [x] `GET /api/projects/{id}/sources` — lists project sources with snapshot + pad-link counts. *Commit `35fe756`.*
+- [x] `GET /api/sources/{id}` — detail including snapshots, provenance, and linked pad IDs; membership enforced via the source's project. *Commit `35fe756`.*
 
 ### Citation extensions
 - [ ] Add `note_range`, `file_range`, `image_region`, `pad_ref` to citation kinds.
