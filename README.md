@@ -1,100 +1,82 @@
 # Workpad AI
 
-Workpad AI is a split-pane chat and artifact workspace built around OpenAI GPT-5.4. The left pane handles conversation; the right pane is a persistent work surface for drafts, code, notes, and structured documents.
+**Living specs for small engineering teams (2–10) and serious individuals.** PRDs, RFCs, ADRs, design notes, and run notes that stay wired to the sources that justify them — repos, meeting transcripts, uploaded files, images — so they don't rot.
 
-This repository contains the current local-first implementation: a React/Vite frontend, a FastAPI backend, and a SQLite database. Docker Compose is the primary way to run the full stack in development.
+Long-horizon direction: [`docs/PRODUCT_VISION.md`](./docs/PRODUCT_VISION.md). Consolidated v1 scope: [`docs/V1_SPEC.md`](./docs/V1_SPEC.md). Phase-by-phase progress: [`docs/V1_BACKLOG.md`](./docs/V1_BACKLOG.md).
 
-> **Security note.** This is a single-user, localhost-only tool. There is **no authentication or authorization** on any API endpoint. Anyone who can reach the API can read, modify, or delete every conversation and artifact. Do **not** expose the backend to a public network, a shared host, or the open internet. Run it on `localhost` or behind a VPN or SSH tunnel you control.
+## Status
+
+v1 is in progress. The original RFC drafting + citation-drift wedge (M0–M3) is shipped; Phases 1 (auth + projects) and 2 (pads under projects + scaffold) are complete, and Phase 3 (sources) is landing stream by stream. Track the state in the backlog.
 
 ## Repo Layout
 
 | Path | Purpose |
 | --- | --- |
 | `apps/web` | React + Vite frontend |
-| `apps/api` | FastAPI backend, SQLite-backed app state, AI integrations |
-| `docs` | Product vision, specs, and migration notes |
+| `apps/api` | FastAPI backend, SQLite-backed state, AI integrations |
+| `docs` | Product vision, v1 spec, backlog, archived earlier specs |
 | `docker-compose.yml` | Full-stack local orchestration |
 
-For backend-specific details, see [apps/api/README.md](./apps/api/README.md).
+Backend details, module map, and the M1/M2 SSE event sequences: [`apps/api/README.md`](./apps/api/README.md).
 
 ## Stack
 
 - Frontend: React, TypeScript, Vite, Tailwind CSS, Zustand, Monaco, TipTap
 - Backend: Python 3.11+, FastAPI, SQLAlchemy, SQLite, OpenAI Responses API
-- Tooling: `yarn` for the frontend, `uv` for the backend
-- Local orchestration: Docker Compose
+- Tooling: `yarn` (frontend), `uv` (backend), Docker Compose for local orchestration
 
-## Run With Docker
+## Run It
 
-1. Copy `.env.example` to `.env`.
-2. Set `OPENAI_API_KEY`.
-3. Optionally set `GITHUB_DEFAULT_TOKEN` if you want to use the RFC drafting and citation verification flows against GitHub repositories.
+Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. Optionally set `GITHUB_DEFAULT_TOKEN` to enable the RFC drafting + citation verification flows against real repos.
 
 ```bash
 docker compose up --build
 ```
 
-Then open `http://localhost:3000`.
+- Web UI: <http://localhost:3000>
+- API: <http://localhost:8088> (`/healthz` returns `{"status": "ok"}`)
 
-Service endpoints:
+The web container runs Vite with hot reload, so edits under `apps/web/src/` refresh without a rebuild. Rebuild only when `package.json`, Vite config, or non-HMR resources change:
 
-- Web UI: `http://localhost:3000`
-- API: `http://localhost:8088`
-- API health check: `http://localhost:8088/healthz`
+```bash
+docker compose up -d --build web   # frontend only
+docker compose up -d --build api   # backend only
+```
 
 ## Run Without Docker
 
-Backend:
-
 ```bash
+# Backend
 cd apps/api
 uv sync --extra dev
-uv run uvicorn src.app.main:app --reload --host 0.0.0.0 --port 8000
-```
+uv run uvicorn src.app.main:app --reload --port 8000
 
-Frontend:
-
-```bash
+# Frontend (in another shell)
 cd apps/web
 yarn install
 yarn dev
 ```
 
-Notes:
+The frontend falls back to `http://localhost:8000` when `VITE_API_URL` is unset. `OPENAI_API_KEY` must be in your shell or in `apps/api/.env` when running the backend outside Docker.
 
-- Before starting the backend directly, export `OPENAI_API_KEY` in your shell or create `apps/api/.env`.
-- The backend reads `.env` from `apps/api` when run directly; Docker Compose reads the repo-root `.env`.
-- The frontend falls back to `http://localhost:8000` when `VITE_API_URL` is unset.
-
-## Common Development Commands
-
-Backend:
+## Development Commands
 
 ```bash
+# Backend
 cd apps/api
-uv run pytest
-uv run ruff check
-uv run mypy
-```
+uv run pytest              # full suite
+uv run ruff check          # lint (scoped to new modules)
+uv run mypy                # type-check (scoped to new modules)
 
-Frontend:
-
-```bash
+# Frontend
 cd apps/web
-yarn build
+yarn build                 # tsc --noEmit && vite build
 ```
 
-## Current Behavior
+## Further Reading
 
-- Chat streams from the FastAPI backend over Server-Sent Events.
-- GPT-5.4 is wired through the Responses API with a strict `canvas_apply` tool.
-- Artifact edits are versioned and persisted in SQLite.
-- Markdown artifacts render in TipTap; code artifacts render in Monaco.
-- The backend also supports RFC drafting, GitHub-backed source fetching, and citation verification workflows.
-
-## Product Docs
-
-- [docs/PRODUCT_VISION.md](./docs/PRODUCT_VISION.md): long-term product direction
-- [docs/V1_SPEC.md](./docs/V1_SPEC.md): original RFC-focused wedge
-- [docs/WEB_MULTIUSER_SPEC.md](./docs/WEB_MULTIUSER_SPEC.md): current multi-user web direction and migration plan
-- [docs/PERSONAL_MVP_SPEC.md](./docs/PERSONAL_MVP_SPEC.md): prior single-user product direction
+- [`docs/PRODUCT_VISION.md`](./docs/PRODUCT_VISION.md) — long-horizon vision (CLI, MCP, connectors, coding-agent interop; all post-v1)
+- [`docs/V1_SPEC.md`](./docs/V1_SPEC.md) — consolidated v1 scope and data model
+- [`docs/V1_BACKLOG.md`](./docs/V1_BACKLOG.md) — phase-by-phase task list
+- [`docs/archive/`](./docs/archive/) — earlier single-user and multi-user spec branches, kept for historical context
+- [`CLAUDE.md`](./CLAUDE.md) — conventions and commit style for AI-assisted work on this repo
