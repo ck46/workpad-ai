@@ -392,7 +392,7 @@ Not tied to a single milestone. Pick up as needed.
 - [ ] `ruff` + `mypy` config for the backend (small scope — just the new modules).
 - [ ] Structured logging around draft and verify passes (model, tokens, latency, dropped citations).
 - [ ] `apps/api/README.md` or module docstrings covering the draft + verify flow end to end.
-- [ ] CI workflow (GitHub Actions): `yarn build` + `uv run pytest` on PR.
+- [x] CI workflow (GitHub Actions): `yarn build` + `uv run pytest` on PR and push-to-main, run as parallel jobs. ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml))
 
 ---
 
