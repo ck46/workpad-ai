@@ -6,11 +6,13 @@ pasted transcript, a note, an uploaded file, an image). A
 can survive drift. A ``PadSourceLink`` joins a pad to the snapshots it
 draws on.
 
-Supersedes the narrower ``SpecSource`` table. ``SpecSource`` rows are
-migrated into this schema by :func:`backfill_spec_sources`, which runs
-on every boot and is idempotent; ``SpecSource`` itself stays read-only
-through Phase 2 so pre-backfill call sites keep working. See
-``docs/V1_SPEC.md`` §Source Model.
+Supersedes the narrower ``SpecSource`` table. Historical ``SpecSource``
+rows are migrated into this schema by :func:`backfill_spec_sources`,
+which runs on every boot and is idempotent. No code writes to
+``SpecSource`` anymore (the RFC drafter and scaffold both call
+:func:`create_source` + :func:`attach_source_to_pad` directly); the
+model is kept only so the boot-time backfill can read legacy rows.
+See ``docs/V1_SPEC.md`` §Source Model.
 
 Schema registers on the shared ``Base`` so ``Base.metadata.create_all``
 picks all three tables up on startup.
@@ -343,6 +345,7 @@ def create_source(
     text: str | None = None,
     ref_pinned: str | None = None,
     provenance: dict[str, Any] | None = None,
+    commit: bool = True,
 ) -> tuple[Source, SourceSnapshot, bool]:
     """Create a ``Source`` + initial ``SourceSnapshot`` from a user input.
 
@@ -357,6 +360,11 @@ def create_source(
     ``False`` when an existing row was reused.
 
     Notes never dedupe — same text, posted twice, is two notes.
+
+    Pass ``commit=False`` to compose this inside a larger transaction
+    (used by the RFC drafter and scaffold, which want the entire pad +
+    citations + sources write to be one atomic step). The caller is
+    then responsible for the final ``session.commit()``.
     """
 
     if not valid_kind(kind):
@@ -433,8 +441,10 @@ def create_source(
                 metadata_json=metadata,
             )
             session.add(snapshot)
-            session.commit()
-            session.refresh(snapshot)
+            session.flush()
+            if commit:
+                session.commit()
+                session.refresh(snapshot)
         return existing, snapshot, False
 
     source = Source(
@@ -456,10 +466,57 @@ def create_source(
         metadata_json=metadata,
     )
     session.add(snapshot)
-    session.commit()
-    session.refresh(source)
-    session.refresh(snapshot)
+    session.flush()
+    if commit:
+        session.commit()
+        session.refresh(source)
+        session.refresh(snapshot)
     return source, snapshot, True
+
+
+def attach_source_to_pad(
+    session: Session,
+    *,
+    pad_id: str,
+    source_id: str,
+    source_snapshot_id: str,
+    role: str = ROLE_DERIVED_FROM,
+    added_by_user_id: str | None = None,
+    added_by_system: bool = False,
+    commit: bool = True,
+) -> tuple[PadSourceLink, bool]:
+    """Create a ``PadSourceLink`` or return the existing one.
+
+    Idempotent on ``(pad_id, source_id)`` — re-attaching is a no-op.
+    The bool in the result tuple is ``True`` when a new link was
+    written, ``False`` when an existing link was reused.
+    """
+
+    if not valid_role(role):
+        raise ValueError(f"unknown role: {role}")
+
+    existing = session.scalar(
+        select(PadSourceLink)
+        .where(PadSourceLink.pad_id == pad_id)
+        .where(PadSourceLink.source_id == source_id)
+    )
+    if existing is not None:
+        return existing, False
+
+    link = PadSourceLink(
+        pad_id=pad_id,
+        source_id=source_id,
+        source_snapshot_id=source_snapshot_id,
+        role=role,
+        added_by_user_id=added_by_user_id,
+        added_by_system=added_by_system,
+    )
+    session.add(link)
+    session.flush()
+    if commit:
+        session.commit()
+        session.refresh(link)
+    return link, True
 
 
 def list_sources_in_project(session: Session, project_id: str) -> list[Source]:

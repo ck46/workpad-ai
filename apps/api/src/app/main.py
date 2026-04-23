@@ -808,7 +808,7 @@ def draft_spec(payload: SpecDraftRequest, user: CurrentUser):
         if payload.conversation_id:
             _require_conversation_access(session, payload.conversation_id, user)
     return StreamingResponse(
-        spec_draft_service.stream_draft(payload),
+        spec_draft_service.stream_draft(payload, user_id=user.id),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )

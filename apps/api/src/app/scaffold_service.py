@@ -13,7 +13,7 @@ to infer:
   * Any GitHub repo URLs mentioned in the input.
 
 Given the inference, the service creates a Project (if none was
-supplied), attaches the seed input as a ``SpecSource`` row, and writes
+supplied), attaches the seed input as a ``Source`` + ``PadSourceLink``, and writes
 a stub ``Artifact`` whose body is the outline. No full drafting happens
 here — that's the job of the RFC drafter or a future generalized
 drafter invoked separately.
@@ -287,12 +287,18 @@ class ScaffoldService:
         # Local imports to keep the module import graph shallow (core +
         # projects both import from each other indirectly via SQLAlchemy
         # relationship back-refs).
-        from .core import Artifact, Conversation, SpecSource, utcnow
+        from .core import Artifact, Conversation, utcnow
         from .projects import (
             Project,
             ProjectMember,
             ROLE_OWNER,
             require_member,
+        )
+        from .sources import (
+            KIND_REPO,
+            KIND_TRANSCRIPT,
+            attach_source_to_pad,
+            create_source,
         )
 
         inference = self.infer(text=text, repo_url=repo_url, hint=hint)
@@ -357,31 +363,51 @@ class ScaffoldService:
             session.add(artifact)
             session.flush()
 
-            # Attach any provided seed as a SpecSource. v1 keeps this
-            # simple: one row per kind, payload carries the raw input
-            # so later drafting can pick it up.
+            # Promote each seed input into the Source schema. Writes go
+            # straight into the new tables — SpecSource is read-only as
+            # of Phase 3 Stream A.
             source_id: str | None = None
             if text and text.strip():
-                src = SpecSource(
-                    artifact_id=artifact.id,
-                    kind="transcript",
-                    payload={"text": text.strip()[:32000], "origin": "scaffold"},
+                transcript_source, transcript_snapshot, _ = create_source(
+                    session,
+                    project_id=project.id,
+                    kind=KIND_TRANSCRIPT,
+                    created_by_user_id=user_id,
+                    text=text.strip()[:32000],
+                    provenance={"origin": "scaffold"},
+                    commit=False,
                 )
-                session.add(src)
-                session.flush()
-                source_id = src.id
+                attach_source_to_pad(
+                    session,
+                    pad_id=artifact.id,
+                    source_id=transcript_source.id,
+                    source_snapshot_id=transcript_snapshot.id,
+                    added_by_system=True,
+                    commit=False,
+                )
+                source_id = transcript_source.id
 
             anchor_repo = repo_url or (detected_repos[0] if detected_repos else None)
             if anchor_repo:
-                src = SpecSource(
-                    artifact_id=artifact.id,
-                    kind="repo",
-                    payload={"url": anchor_repo, "origin": "scaffold"},
+                repo_source, repo_snapshot, _ = create_source(
+                    session,
+                    project_id=project.id,
+                    kind=KIND_REPO,
+                    created_by_user_id=user_id,
+                    url=anchor_repo,
+                    provenance={"origin": "scaffold"},
+                    commit=False,
                 )
-                session.add(src)
-                session.flush()
+                attach_source_to_pad(
+                    session,
+                    pad_id=artifact.id,
+                    source_id=repo_source.id,
+                    source_snapshot_id=repo_snapshot.id,
+                    added_by_system=True,
+                    commit=False,
+                )
                 if source_id is None:
-                    source_id = src.id
+                    source_id = repo_source.id
 
             conversation.updated_at = utcnow()
             project.updated_at = utcnow()

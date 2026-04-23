@@ -9,7 +9,8 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core import Artifact, Conversation, SpecSource
+from app.core import Artifact, Conversation
+from app.sources import KIND_REPO, KIND_TRANSCRIPT, PadSourceLink, Source, SourceSnapshot
 from app.projects import Project, ProjectMember, ROLE_OWNER
 from app.rfc_drafter import ModelCall, ToolCallResult
 from app.scaffold_service import (
@@ -207,11 +208,29 @@ def test_scaffold_creates_project_pad_and_sources_for_new_user(
         assert conv.project_id == project.id
         assert conv.owner_id == user_id
 
-        sources = (
-            session.query(SpecSource).filter_by(artifact_id=artifact.id).all()
-        )
-        kinds = {s.kind for s in sources}
-        assert kinds == {"transcript", "repo"}
+        # Both seeds promoted into the new schema: one Source per kind,
+        # each with its own SourceSnapshot and a PadSourceLink pointing at
+        # the artifact with added_by_system=True.
+        links = session.query(PadSourceLink).filter_by(pad_id=artifact.id).all()
+        assert len(links) == 2
+        assert all(link.added_by_system for link in links)
+
+        sources = {
+            s.kind: s
+            for s in session.query(Source)
+            .filter(Source.id.in_([link.source_id for link in links]))
+            .all()
+        }
+        assert set(sources) == {KIND_TRANSCRIPT, KIND_REPO}
+        assert sources[KIND_TRANSCRIPT].project_id == project.id
+
+        snapshots = {
+            link.source_id: session.get(SourceSnapshot, link.source_snapshot_id)
+            for link in links
+        }
+        transcript_snap = snapshots[sources[KIND_TRANSCRIPT].id]
+        assert transcript_snap is not None
+        assert transcript_snap.content_text is not None
 
 
 def test_scaffold_reuses_existing_project_when_project_id_given(

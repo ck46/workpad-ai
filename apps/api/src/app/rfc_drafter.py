@@ -317,6 +317,7 @@ class RFCDrafter:
     def draft(
         self,
         *,
+        user_id: str,
         conversation_id: str | None,
         project_id: str,
         transcript: str,
@@ -327,10 +328,11 @@ class RFCDrafter:
 
         Parses *transcript*, pins the current HEAD of *repo* as the draft
         ref, runs pass 1 + pass 2 + citation validation, then writes a new
-        Artifact (spec_type="rfc") with accompanying SpecSource rows and
-        Citation rows in a single transaction. If *conversation_id* is
-        None, a new conversation is created with a title derived from the
-        RFC title.
+        Artifact (spec_type="rfc") with accompanying Source +
+        SourceSnapshot + PadSourceLink rows (one trio per seed: the
+        transcript and the repo) and Citation rows in a single
+        transaction. If *conversation_id* is None, a new conversation
+        is created with a title derived from the RFC title.
 
         When *on_event* is provided, it is invoked at phase boundaries
         with structured dicts so the caller can surface progress (e.g.
@@ -341,12 +343,17 @@ class RFCDrafter:
         from .core import (
             Artifact,
             Citation,
-            SpecSource,
             create_conversation,
             get_conversation_or_404,
             utcnow,
         )
         from .schemas import ArtifactStatus, ArtifactType, SpecType
+        from .sources import (
+            KIND_REPO,
+            KIND_TRANSCRIPT,
+            attach_source_to_pad,
+            create_source,
+        )
         from .transcripts import parse_transcript
 
         emit = on_event or (lambda _event: None)
@@ -399,7 +406,7 @@ class RFCDrafter:
                 conversation = get_conversation_or_404(session, conversation_id)
             else:
                 conversation = create_conversation(
-                    session, pass2["title"], project_id=project_id
+                    session, pass2["title"], project_id=project_id, owner_id=user_id
                 )
 
             artifact = Artifact(
@@ -418,19 +425,49 @@ class RFCDrafter:
             session.add(artifact)
             session.flush()
 
-            session.add(
-                SpecSource(
-                    artifact_id=artifact.id,
-                    kind="transcript",
-                    payload=transcript_payload.as_storage_dict(),
-                )
+            # Promote the two seed inputs (transcript + repo) directly
+            # into the new Source schema. SpecSource writes are frozen as
+            # of Phase 3 Stream A; the backfill keeps historical rows
+            # readable but no new ones are written.
+            transcript_storage = transcript_payload.as_storage_dict()
+            transcript_source, transcript_snapshot, _ = create_source(
+                session,
+                project_id=project_id,
+                kind=KIND_TRANSCRIPT,
+                created_by_user_id=user_id,
+                text=transcript_payload.text,
+                provenance={
+                    "origin": "rfc_draft",
+                    "hash": transcript_storage["hash"],
+                    "segments": transcript_storage["segments"],
+                },
+                commit=False,
             )
-            session.add(
-                SpecSource(
-                    artifact_id=artifact.id,
-                    kind="repo",
-                    payload={"repo": repo, "ref_pinned": ref_at_draft},
-                )
+            attach_source_to_pad(
+                session,
+                pad_id=artifact.id,
+                source_id=transcript_source.id,
+                source_snapshot_id=transcript_snapshot.id,
+                added_by_system=True,
+                commit=False,
+            )
+            repo_source, repo_snapshot, _ = create_source(
+                session,
+                project_id=project_id,
+                kind=KIND_REPO,
+                created_by_user_id=user_id,
+                url=repo,
+                ref_pinned=ref_at_draft,
+                provenance={"origin": "rfc_draft"},
+                commit=False,
+            )
+            attach_source_to_pad(
+                session,
+                pad_id=artifact.id,
+                source_id=repo_source.id,
+                source_snapshot_id=repo_snapshot.id,
+                added_by_system=True,
+                commit=False,
             )
             for entry in valid_citations:
                 session.add(

@@ -5,9 +5,16 @@ from dataclasses import dataclass
 
 import httpx
 
-from app.core import Artifact, Citation, SpecSource
+from app.core import Artifact, Citation
 from app.github_client import CachedGitHubReader, GitHubClient
 from app.rfc_drafter import ModelCall, RFCDrafter, ToolCallResult
+from app.sources import (
+    KIND_REPO,
+    KIND_TRANSCRIPT,
+    PadSourceLink,
+    Source,
+    SourceSnapshot,
+)
 
 
 SAMPLE_FILE = b"def login(user):\n    return True\n\n\ndef logout(user):\n    return None\n"
@@ -71,7 +78,7 @@ def test_end_to_end_draft_persists_artifact_sources_and_citations(session_factor
     from app.auth import User, hash_password
     from app.projects import ensure_personal_project
 
-    # Drafter now requires a project_id. Set one up.
+    # Drafter now requires a project_id + user_id. Set one of each up.
     with session_factory() as session:
         user = User(email="e2e@example.com", password_hash=hash_password("correct-horse"))
         session.add(user)
@@ -79,6 +86,7 @@ def test_end_to_end_draft_persists_artifact_sources_and_citations(session_factor
         project = ensure_personal_project(session, user.id)
         session.commit()
         project_id = project.id
+        user_id = user.id
 
     client = GitHubClient("test-token", transport=httpx.MockTransport(_github_handler))
     reader = CachedGitHubReader(client, session_factory)
@@ -147,6 +155,7 @@ def test_end_to_end_draft_persists_artifact_sources_and_citations(session_factor
         "00:00:45 Sam: We need proper verification before this ships.\n"
     )
     result = drafter.draft(
+        user_id=user_id,
         conversation_id=None,
         project_id=project_id,
         transcript=transcript,
@@ -168,14 +177,30 @@ def test_end_to_end_draft_persists_artifact_sources_and_citations(session_factor
         assert artifact.title == "Rework authentication"
         assert "login handler" in artifact.content
 
-        sources = session.query(SpecSource).filter(SpecSource.artifact_id == artifact.id).all()
-        kinds = {s.kind for s in sources}
-        assert kinds == {"transcript", "repo"}
-        repo_src = next(s for s in sources if s.kind == "repo")
-        assert repo_src.payload["ref_pinned"] == "draft-sha"
-        transcript_src = next(s for s in sources if s.kind == "transcript")
-        assert transcript_src.payload["segments"] is not None
-        assert len(transcript_src.payload["segments"]) == 2
+        links = session.query(PadSourceLink).filter_by(pad_id=artifact.id).all()
+        assert len(links) == 2
+        assert all(link.added_by_system for link in links)
+        sources_by_kind = {
+            s.kind: s
+            for s in session.query(Source)
+            .filter(Source.id.in_([link.source_id for link in links]))
+            .all()
+        }
+        assert set(sources_by_kind) == {KIND_TRANSCRIPT, KIND_REPO}
+
+        # Repo source keeps the draft-time ref on its snapshot.
+        repo_source = sources_by_kind[KIND_REPO]
+        repo_snapshot = (
+            session.query(SourceSnapshot)
+            .filter_by(source_id=repo_source.id)
+            .one()
+        )
+        assert repo_snapshot.snapshot_ref == "draft-sha"
+
+        # Transcript source preserves segments in provenance_json.
+        transcript_source = sources_by_kind[KIND_TRANSCRIPT]
+        assert transcript_source.provenance_json.get("segments") is not None
+        assert len(transcript_source.provenance_json["segments"]) == 2
 
         citations = (
             session.query(Citation)

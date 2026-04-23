@@ -92,10 +92,11 @@ class SpecDraftService:
     # Non-streaming entry point (kept for tests / simple callers).
     # ------------------------------------------------------------------
 
-    def draft(self, payload: SpecDraftRequest) -> DraftResult:
+    def draft(self, payload: SpecDraftRequest, *, user_id: str) -> DraftResult:
         drafter, github_client = self._build_drafter(payload)
         try:
             return drafter.draft(
+                user_id=user_id,
                 conversation_id=payload.conversation_id,
                 project_id=payload.project_id,
                 transcript=payload.transcript,
@@ -108,7 +109,7 @@ class SpecDraftService:
     # SSE streaming
     # ------------------------------------------------------------------
 
-    def stream_draft(self, payload: SpecDraftRequest) -> Iterator[str]:
+    def stream_draft(self, payload: SpecDraftRequest, *, user_id: str) -> Iterator[str]:
         """Yield SSE-formatted events as each draft phase lands.
 
         The drafter runs on a worker thread and emits progress events into
@@ -131,6 +132,7 @@ class SpecDraftService:
         def worker() -> None:
             try:
                 result = drafter.draft(
+                    user_id=user_id,
                     conversation_id=payload.conversation_id,
                     project_id=payload.project_id,
                     transcript=payload.transcript,
