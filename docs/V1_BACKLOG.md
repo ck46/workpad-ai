@@ -15,10 +15,12 @@ Broken into substeps 1A–1F that can be landed and tested independently. Items 
 ### 1A — Backlog refresh & pre-Phase-1 baseline
 
 - [x] Consolidate v1 direction in docs (V1_SPEC, V1_BACKLOG, PRODUCT_VISION, EXPANSION_HYPOTHESES, CLAUDE.md; archive PERSONAL_MVP and WEB_MULTIUSER specs). *This commit.*
-- [x] Baseline auth shipped in `f2844f2` — `User` + `UserSession` models, `POST /api/auth/{signup,signin,signout}`, `GET /api/auth/me`, scrypt password hashing, 30-day HttpOnly cookie (`wp_session`), `get_current_user` dependency. ([`apps/api/src/app/auth.py`](../apps/api/src/app/auth.py))
-- [x] Baseline ownership shipped in `f2844f2` — `Conversation.owner_id` FK, all library queries scoped by caller. ([`apps/api/src/app/core.py`](../apps/api/src/app/core.py))
+- [x] Baseline auth shipped pre-Phase-1 — `User` + `UserSession` models, `POST /api/auth/{signup,signin,signout}`, `GET /api/auth/me`, scrypt password hashing, 30-day HttpOnly cookie (`wp_session`), `get_current_user` dependency. ([`apps/api/src/app/auth.py`](../apps/api/src/app/auth.py))
+- [x] Baseline ownership shipped pre-Phase-1 — `Conversation.owner_id` FK, all library queries scoped by caller. ([`apps/api/src/app/core.py`](../apps/api/src/app/core.py))
 
 **Naming note:** shipped endpoints are `/signup` `/signin` `/signout` (not `/sign-up` etc). Frontend `auth.ts` calls the hyphenless form. Keep hyphenless — more ergonomic — and treat the earlier backlog naming as superseded.
+
+**Baseline SHA note:** an earlier revision of this doc named `f2844f2` as the baseline-auth commit. That SHA was lost to a rebase and no longer exists in the repo; the code is live, the provenance isn't recoverable from git history — don't chase the hash.
 
 ### 1B — Password reset + auth tests
 
@@ -390,17 +392,7 @@ Not tied to a single milestone. Pick up as needed.
 - [ ] `ruff` + `mypy` config for the backend (small scope — just the new modules).
 - [ ] Structured logging around draft and verify passes (model, tokens, latency, dropped citations).
 - [ ] `apps/api/README.md` or module docstrings covering the draft + verify flow end to end.
-- [ ] Initialize git repository at the project root (currently not a git repo — see `CLAUDE.md`).
 - [ ] CI workflow (GitHub Actions): `yarn build` + `uv run pytest` on PR.
-
----
-
-## Preflight (do before M0)
-
-- [ ] Re-read `V1_SPEC.md` end-to-end.
-- [ ] Generate a GitHub PAT with `repo:read` scope; set `GITHUB_DEFAULT_TOKEN` locally.
-- [ ] Identify the repo you'll use as the demo target for M1 smoke tests.
-- [ ] Confirm `docker compose up --build` still runs cleanly on current `main`.
 
 ---
 
