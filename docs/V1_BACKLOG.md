@@ -121,7 +121,7 @@ The marketing + signin/signup/forgot UI already existed in `apps/web/src/compone
 
 ### Schema
 - [x] `Source`, `SourceSnapshot`, `PadSourceLink` tables ([`apps/api/src/app/sources.py`](../apps/api/src/app/sources.py)). Registered on `Base.metadata` via `init_db`; `create_all` picks them up on first boot, no migration needed. *Commit `a945bc9`.*
-- [ ] Backfill: for each `SpecSource`, create a `Source` + `SourceSnapshot` + `PadSourceLink`. Freeze `spec_sources` writes afterward.
+- [x] Backfill: for each `SpecSource`, create a `Source` + `SourceSnapshot` + `PadSourceLink` ([`backfill_spec_sources`](../apps/api/src/app/sources.py)). Runs on every boot, idempotent, dedupes sources within a project by `(kind, canonical_key)`. 5 new tests in `test_sources_backfill.py`. *Commit `618af7c`.* Freezing `spec_sources` writes — i.e. flipping the drafter + scaffold to write the new schema directly — rolls into the next Stream A commit.
 
 ### Upload pipeline
 - [ ] `POST /api/uploads` — multipart; returns file IDs. Stores raw file on disk (local) or S3-compatible (hosted).
