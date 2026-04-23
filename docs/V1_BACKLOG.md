@@ -120,7 +120,7 @@ The marketing + signin/signup/forgot UI already existed in `apps/web/src/compone
 ## Phase 3 — Sources + file/image upload (≈ 2 weeks)
 
 ### Schema
-- [ ] `Source`, `SourceSnapshot`, `PadSourceLink` tables (see `V1_SPEC.md` for fields).
+- [x] `Source`, `SourceSnapshot`, `PadSourceLink` tables ([`apps/api/src/app/sources.py`](../apps/api/src/app/sources.py)). Registered on `Base.metadata` via `init_db`; `create_all` picks them up on first boot, no migration needed. *Commit `a945bc9`.*
 - [ ] Backfill: for each `SpecSource`, create a `Source` + `SourceSnapshot` + `PadSourceLink`. Freeze `spec_sources` writes afterward.
 
 ### Upload pipeline
@@ -389,9 +389,9 @@ Not tied to a single milestone. Pick up as needed.
 
 - [ ] Decide: OpenAI vs Anthropic for the two-pass drafting. (Model selector already exists in `App.tsx`; backend `rfc_drafter.py` should be provider-agnostic or select based on request.)
 - [x] Add `apps/api/tests/conftest.py` with reusable fixtures (in-memory SQLite, mock GitHub, mock model). *Shipped in M0 with `engine` + `session_factory` + `session` fixtures; `StaticPool` added in M1 so multi-session tests see the same in-memory DB.*
-- [ ] `ruff` + `mypy` config for the backend (small scope — just the new modules).
+- [x] `ruff` + `mypy` config for the backend — scoped via `include` / `files` lists in `pyproject.toml` so the older monolithic files stay untouched; new Phase 3+ modules opt in. Wired into CI as extra steps on the backend job. *Commit `33b3617`.*
 - [ ] Structured logging around draft and verify passes (model, tokens, latency, dropped citations).
-- [ ] `apps/api/README.md` or module docstrings covering the draft + verify flow end to end.
+- [x] `apps/api/README.md` covering local dev commands, the module map, and the M1 draft / M2 verify SSE sequences ([`apps/api/README.md`](../apps/api/README.md)). *Commit `be3e82b`.*
 - [x] CI workflow (GitHub Actions): `yarn build` + `uv run pytest` on PR and push-to-main, run as parallel jobs. ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml))
 
 ---
