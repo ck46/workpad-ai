@@ -21,7 +21,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "mypy>=1.13.0",
   "pytest>=8.3.3",
+  "ruff>=0.8.0",
 ]
 
 [build-system]
@@ -34,3 +36,28 @@ packages = ["src/app"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+# Linting and typing. Scoped deliberately narrow: enforce on the newer
+# modules added in Phase 3+ and treat the older monolithic files as
+# legacy until they're refactored. See V1_BACKLOG cross-cutting §
+# "ruff + mypy config for the backend (small scope)".
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+# Scoped deliberately narrow — enforce on the newer modules added from
+# Phase 3 onward, treat older files as legacy until someone takes on
+# the reformat. Expand this list as new modules land.
+include = ["src/app/sources.py"]
+
+[tool.ruff.lint]
+# E/F/W = pycodestyle + pyflakes essentials; I = isort.
+# Intentionally omits style-opinion rules (B, UP, SIM) until there's
+# appetite to fix the backlog they'd surface on existing files.
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/app/sources.py"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true

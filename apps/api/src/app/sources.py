@@ -24,7 +24,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from .core import Base, utcnow
 
-
 # ---------------------------------------------------------------------------
 # Kind / role vocabularies — kept as module constants so callers don't
 # sprinkle magic strings.
