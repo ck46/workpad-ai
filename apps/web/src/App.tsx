@@ -6,7 +6,9 @@ import {
   createProject,
   getProjectDetail,
   listProjects,
+  scaffold as apiScaffold,
   type ProjectDetail as ProjectDetailPayload,
+  type ScaffoldRequest,
 } from "./lib/projects";
 import { useSystemTheme, type SystemTheme } from "./lib/systemTheme";
 import { LibraryHome, type ArtifactListItem } from "./components/LibraryHome";
@@ -348,6 +350,11 @@ type WorkbenchStore = {
     title: string;
     artifact_type: "rfc" | "adr" | "design_note" | "run_note";
     content?: string;
+  }) => Promise<void>;
+  scaffoldFromInput: (payload: {
+    text?: string;
+    repo_url?: string;
+    hint?: string;
   }) => Promise<void>;
   selectConversation: (conversationId: string) => Promise<void>;
   setShowArchived: (value: boolean) => void;
@@ -805,6 +812,37 @@ const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     });
     // Select the backing conversation so the user lands on the new pad.
     await get().selectConversation(artifact.conversation_id);
+  },
+
+  async scaffoldFromInput(payload) {
+    const projectId = get().currentProjectId;
+    const request: ScaffoldRequest = {
+      text: payload.text,
+      repo_url: payload.repo_url,
+      hint: payload.hint,
+      // Anchor in the current project so the empty hero populates that
+      // project rather than spawning a brand-new one.
+      project_id: projectId ?? undefined,
+    };
+    const result = await apiScaffold(request);
+    // The backend returns the same project (we passed project_id) but
+    // refresh the cache anyway in case fields changed.
+    get().upsertProject(result.project);
+    // Re-fetch the conversation list scoped to this project so the
+    // newly-created backing conversation appears in the sidebar, then
+    // open the pad.
+    if (projectId) {
+      const includeArchived = get().showArchived;
+      try {
+        const conversations = await requestJson<ConversationSummary[]>(
+          `/api/conversations?project_id=${encodeURIComponent(projectId)}&include_archived=${includeArchived}`,
+        );
+        set({ conversations });
+      } catch {
+        // non-fatal — selectConversation below will still load the pad
+      }
+    }
+    await get().selectConversation(result.conversation_id);
   },
 
   async selectConversation(conversationId: string) {
@@ -5356,6 +5394,9 @@ function App() {
                           .getState()
                           .conversations.find((c) => !c.archived_at);
                         if (latest) void selectConversation(latest.id);
+                      }}
+                      onScaffold={async (payload) => {
+                        await useWorkbenchStore.getState().scaffoldFromInput(payload);
                       }}
                     />
                   </div>

@@ -100,3 +100,38 @@ export async function createInvite(
   }
   return (await response.json()) as InviteCreateResponse;
 }
+
+export type ScaffoldRequest = {
+  text?: string;
+  repo_url?: string;
+  hint?: string;
+  // When set, scaffolds into the existing project (caller must be a member).
+  // When absent, a new project is created and the caller is auto-added as
+  // owner.
+  project_id?: string;
+};
+
+export type ScaffoldResponse = {
+  project: ProjectSummary;
+  project_created: boolean;
+  artifact_id: string;
+  conversation_id: string;
+  pad_type: "rfc" | "adr" | "design_note" | "run_note";
+  pad_title: string;
+  source_id: string | null;
+  outline_sections: string[];
+  detected_repo_urls: string[];
+};
+
+export async function scaffold(payload: ScaffoldRequest): Promise<ScaffoldResponse> {
+  const response = await fetch(`${API_BASE}/api/scaffold`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return (await response.json()) as ScaffoldResponse;
+}

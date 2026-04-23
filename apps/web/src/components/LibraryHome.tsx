@@ -10,6 +10,7 @@ import {
   History,
   LayoutGrid,
   List,
+  LoaderCircle,
   Plus,
   Sparkles,
   Upload,
@@ -83,18 +84,26 @@ function shortType(a: ArtifactListItem): string {
   return t ? (TYPE_LABEL[t] ?? t).toUpperCase() : a.content_type.toUpperCase();
 }
 
+export type ScaffoldDropPayload = {
+  text?: string;
+  repo_url?: string;
+  hint?: string;
+};
+
 export function LibraryHome({
   projectId,
   onOpen,
   onNew,
   onDraftAI,
   onContinueLast,
+  onScaffold,
 }: {
   projectId: string | null;
   onOpen: (artifact: ArtifactListItem) => void;
   onNew: () => void;
   onDraftAI: () => void;
   onContinueLast: () => void;
+  onScaffold: (payload: ScaffoldDropPayload) => Promise<void>;
 }) {
   const { user } = useAuth();
   const [items, setItems] = useState<ArtifactListItem[] | null>(null);
@@ -206,7 +215,11 @@ export function LibraryHome({
       ) : null}
 
       {totalArtifacts === 0 && !error ? (
-        <EmptyProjectHero onDraftAI={onDraftAI} onNew={onNew} />
+        <EmptyProjectHero
+          onDraftAI={onDraftAI}
+          onNew={onNew}
+          onScaffold={onScaffold}
+        />
       ) : null}
 
       {recent.length > 0 ? (
@@ -456,66 +469,153 @@ function TypeChip({ type }: { type: string }) {
 
 // ---------------------------------------------------------------------------
 // EmptyProjectHero — rendered when the current project has zero pads.
-// Foreshadows the Phase 2 scaffold dropzone (paste transcript / upload file /
-// paste repo URL) but keeps that surface visually disabled for now since the
-// backend scaffold endpoint isn't wired yet. The two CTA buttons below drop
-// the user into flows that DO work today: new manual pad + Draft with AI.
+// Real scaffold dropzone: paste a transcript, paste a repo URL, or both
+// (plus an optional hint), submit, and land on a populated pad. Falls back
+// to the manual flows ("Draft with AI" RFC modal, "Start a blank pad"
+// type-picker modal) for users who'd rather not use the scaffold.
 // ---------------------------------------------------------------------------
 function EmptyProjectHero({
   onDraftAI,
   onNew,
+  onScaffold,
 }: {
   onDraftAI: () => void;
   onNew: () => void;
+  onScaffold: (payload: ScaffoldDropPayload) => Promise<void>;
 }) {
+  const [text, setText] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [hint, setHint] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSubmit =
+    !busy && (text.trim().length > 0 || repoUrl.trim().length > 0 || hint.trim().length > 0);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onScaffold({
+        text: text.trim() || undefined,
+        repo_url: repoUrl.trim() || undefined,
+        hint: hint.trim() || undefined,
+      });
+      // Parent handles navigating to the new pad; clear local state in
+      // case the user returns to this view.
+      setText("");
+      setRepoUrl("");
+      setHint("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not scaffold the pad.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <section className="mb-11 rounded-2xl border border-dashed border-shell-border-strong bg-shell-1 px-6 py-10 text-center sm:px-10">
-      <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-lg bg-shell-2">
-        <FileUp size={24} className="text-ink-3" />
-      </div>
-      <h2
-        className="m-0 font-serif text-[28px] font-medium text-ink-1"
-        style={{ letterSpacing: "-0.02em", lineHeight: 1.15 }}
-      >
-        Start your first pad.
-      </h2>
-      <p className="mx-auto mt-2 max-w-[60ch] text-[14px] text-ink-2">
-        Drop a meeting transcript, a PDF, or a repo URL — Workpad will scaffold
-        a named project around it and draft a starting pad. Or start writing
-        manually and wire sources in as you go.
-      </p>
-
-      <div
-        className="mx-auto mt-7 flex max-w-[560px] items-center gap-3 rounded-xl border-2 border-dashed border-shell-border bg-shell-0 px-5 py-6 text-left opacity-60"
-        aria-disabled
-        title="Scaffold drop zone lands in Phase 2"
-      >
-        <Upload size={18} className="flex-none text-ink-3" />
-        <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-medium text-ink-1">
-            Drop a transcript, file, or repo URL
-          </div>
-          <div className="mt-0.5 font-mono text-[11px] text-ink-3">
-            Coming in Phase 2 — scaffold from any input
-          </div>
+    <section className="mb-11 rounded-2xl border border-dashed border-shell-border-strong bg-shell-1 px-6 py-10 sm:px-10">
+      <div className="mx-auto max-w-[640px] text-center">
+        <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-lg bg-shell-2">
+          <FileUp size={24} className="text-ink-3" />
         </div>
+        <h2
+          className="m-0 font-serif text-[28px] font-medium text-ink-1"
+          style={{ letterSpacing: "-0.02em", lineHeight: 1.15 }}
+        >
+          Start your first pad.
+        </h2>
+        <p className="mx-auto mt-2 max-w-[60ch] text-[14px] text-ink-2">
+          Drop a meeting transcript, paste a repo URL, or both. Workpad will
+          name the work, pick a pad type, and write you an outline to start
+          editing.
+        </p>
       </div>
 
-      <div className="mt-7 flex flex-wrap justify-center gap-2">
+      <form onSubmit={handleSubmit} className="mx-auto mt-7 flex max-w-[640px] flex-col gap-3">
+        <label className="flex flex-col gap-1.5">
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+            Paste a transcript, notes, or any seed text
+          </span>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={
+              "00:00:12 Alex: We should rate-limit the signup endpoint.\n00:00:45 Sam: Per IP or per token?"
+            }
+            disabled={busy}
+            rows={6}
+            className="w-full rounded-md border border-shell-border-strong bg-shell-0 px-3 py-2.5 font-mono text-[12.5px] text-ink-1 outline-none transition placeholder:text-ink-3 focus:border-signal disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        </label>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1.5">
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+              Repo URL (optional)
+            </span>
+            <input
+              type="text"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+              placeholder="https://github.com/acme/api"
+              disabled={busy}
+              className="w-full rounded-md border border-shell-border-strong bg-shell-0 px-3 py-2 text-[13px] text-ink-1 outline-none transition placeholder:text-ink-3 focus:border-signal disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+              Hint (optional)
+            </span>
+            <input
+              type="text"
+              value={hint}
+              onChange={(e) => setHint(e.target.value)}
+              placeholder="RFC for rate limiting at the edge"
+              disabled={busy}
+              className="w-full rounded-md border border-shell-border-strong bg-shell-0 px-3 py-2 text-[13px] text-ink-1 outline-none transition placeholder:text-ink-3 focus:border-signal disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+        </div>
+        {error ? (
+          <div
+            className="rounded-md border border-state-missing-soft bg-state-missing-soft px-3 py-2 text-[12.5px] text-state-missing-ink"
+            role="alert"
+          >
+            {error}
+          </div>
+        ) : null}
+        <div className="flex items-center justify-center gap-2 pt-1">
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="inline-flex items-center gap-2 rounded-md bg-signal px-4 py-2.5 text-[13px] font-medium text-white transition hover:bg-signal-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busy ? <LoaderCircle size={14} className="animate-spin" /> : <Upload size={14} />}
+            {busy ? "Scaffolding…" : "Scaffold from this"}
+          </button>
+        </div>
+      </form>
+
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-2 border-t border-shell-border pt-6">
+        <span className="font-mono text-[11px] text-ink-3">or skip the scaffold:</span>
         <button
           type="button"
           onClick={onDraftAI}
-          className="inline-flex items-center gap-2 rounded-md bg-signal px-4 py-2 text-[13px] font-medium text-white transition hover:bg-signal-hover"
+          disabled={busy}
+          className="inline-flex items-center gap-2 rounded-md border border-shell-border-strong bg-shell-1 px-3 py-1.5 text-[12.5px] font-medium text-ink-1 transition hover:bg-shell-2 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <Sparkles size={14} />
-          Draft with AI
+          <Sparkles size={13} />
+          Draft RFC with AI
         </button>
         <button
           type="button"
           onClick={onNew}
-          className="inline-flex items-center gap-2 rounded-md border border-shell-border-strong bg-shell-1 px-4 py-2 text-[13px] font-medium text-ink-1 transition hover:bg-shell-2"
+          disabled={busy}
+          className="inline-flex items-center gap-2 rounded-md border border-shell-border-strong bg-shell-1 px-3 py-1.5 text-[12.5px] font-medium text-ink-1 transition hover:bg-shell-2 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <Plus size={14} />
+          <Plus size={13} />
           Start a blank pad
         </button>
       </div>
