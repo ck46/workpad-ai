@@ -203,6 +203,7 @@ def init_db() -> None:
     # from core).
     from . import auth as _auth  # noqa: F401
     from . import projects as _projects  # noqa: F401
+    from . import sources as _sources  # noqa: F401
     from .projects import backfill_personal_projects
 
     engine = get_engine()
