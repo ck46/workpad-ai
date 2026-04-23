@@ -90,25 +90,28 @@ The marketing + signin/signup/forgot UI already existed in `apps/web/src/compone
 ## Phase 2 — Pads under projects + stub scaffold (≈ 2 weeks)
 
 ### Schema updates
-- [ ] Add to `Pad`: `pad_type` (enum `rfc | adr | design_note | run_note`), `status`, `summary`, `last_opened_at`, `owner_user_id`, `created_by_user_id`.
-- [ ] Backfill `pad_type` from `spec_type`; set `status = 'active'`.
-- [ ] Keep `spec_type` column for now as transitional.
+- [x] `Pad` (Artifact) already carries `artifact_type` (=pad_type), `status`, `summary`, `last_opened_at`, `project_id` from earlier phases; `spec_type` retained for transitional library queries. *Pre-Phase-2 baseline.*
+- [ ] Add `owner_user_id` and `created_by_user_id` columns to `Artifact` for "pads I created" / "owner" filter dimensions. *Deferred — not required to ship the scaffold, and the existing `Conversation.owner_id` trace already lets us derive this if needed.*
 
 ### Library view
-- [ ] `GET /api/projects/{id}/pads` with filters (type, status, owner).
-- [ ] Frontend: library route with list + filters + open.
-- [ ] Rename "New RFC" → "New pad" with type picker.
-- [ ] Manual pad creation for all four types.
+- [x] Manual pad creation for all four types via `NewPadModal` (type picker tile grid, title input, POSTs to `/api/library/artifacts` with `artifact_type`). Replaces the old behavior where the sidebar "New pad" button only created an empty conversation. *Commit `6047e46`.*
+- [x] Sidebar + library hero "New pad" buttons now open `NewPadModal`; "New thread" icon in the chat header still opens an empty conversation (the chat-only flow). *Commit `6047e46`.*
+- [x] `GET /api/library/artifacts?project_id=...` already supports filtering by `artifact_type`/`status`/`q` from Phase 1D. The dedicated `GET /api/projects/{id}/pads` alias is a future polish.
+- [x] Library list + open works without opening a thread (the existing `LibraryHome` already routes a click straight to the pad).
 
 ### Stub scaffold (first-run)
-- [ ] `POST /api/scaffold` — accepts `text` (optional), `file_ids` (optional), `repo_url` (optional), `hint` (optional).
-- [ ] Scaffold inference: call model to produce `{ project_name, pad_type, pad_title, outline_sections, detected_repo_urls }`.
-- [ ] Create project + source + stub pad (outline only; no live drafting yet).
-- [ ] Landing screen dropzone: text paste / file upload / repo URL → `/api/scaffold`.
-- [ ] Post-scaffold redirect to the new pad.
+- [x] `POST /api/scaffold` — accepts `text`, `repo_url`, `hint`, optional `project_id`. *Commit `efa14ba`.*
+- [x] Scaffold inference: single forced tool call (`infer_scaffold`) produces `{ project_name, pad_type, pad_title, outline_sections, detected_repo_urls }`. Regex fallback extracts `github.com/<owner>/<name>` from raw inputs when the model omits them. *Commit `efa14ba`.*
+- [x] Creates project (when no `project_id`) + backing conversation + `Artifact` with markdown outline + `SpecSource` rows for both transcript and repo seeds. Caller becomes owner on a freshly-created project. *Commit `efa14ba`.*
+- [x] Tests: 17 covering the pure helpers, the service against a real DB with a scripted AI client (happy path, project reuse, empty-input rejection, non-member rejection on existing projects, regex fallback), and the HTTP endpoint (auth gate, validation, 503 missing-key, mocked happy path). Suite went 90 → 107. *Commit `0e19450`.*
+- [x] Functional dropzone in `EmptyProjectHero` (transcript textarea + repo URL + hint). Replaces the disabled "Coming in Phase 2" placeholder. Submits via the new `scaffoldFromInput` store action which scopes to the current project, refreshes the conversation list, and routes to the new pad. *Commit `a1532af`.*
+- [ ] File upload as a scaffold input (out of scope for Phase 2 — slots into Phase 3's upload pipeline).
 
 ### Exit criterion
-- [ ] Pads are openable from the library without opening a thread. A first-time user can paste text into the scaffold dropzone and land inside a named project with an outlined stub pad.
+- [x] Pads are openable from the library without opening a thread.
+- [x] A first-time user can paste text into the scaffold dropzone and land inside a populated project with an outlined stub pad.
+
+**Status:** Phase 2 complete for v1's "first session produces value" path. Remaining items (`owner_user_id` columns, `/api/projects/{id}/pads` alias, file-upload scaffold input) are non-blocking polish and roll into Phase 3 or later.
 
 ---
 
