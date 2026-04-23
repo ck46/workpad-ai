@@ -87,9 +87,24 @@ from .schemas import (
     ScaffoldResponse,
     SignInRequest,
     SignUpRequest,
+    SourceCreateRequest,
+    SourceCreateResponse,
+    SourceDetail,
+    SourceKind,
+    SourceSnapshotRead,
+    SourceSummary,
     SpecDraftRequest,
     UserRead,
     VerifyCitationsResult,
+)
+from .sources import (
+    SourceInputError,
+    count_pad_links_for_sources,
+    count_snapshots_for_sources,
+    create_source,
+    get_source_with_snapshots,
+    list_linked_pad_ids,
+    list_sources_in_project,
 )
 from .spec_service import CitationInsightService, CitationVerifyService, SpecDraftService
 
@@ -407,6 +422,117 @@ def invites_accept(payload: InviteAcceptRequest, user: CurrentUser):
             role=ProjectRole(member.role),
             created_at=project.created_at,
             updated_at=project.updated_at,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Sources (Phase 3 Stream A)
+# ---------------------------------------------------------------------------
+def _source_summary(
+    source, *, snapshot_counts: dict[str, int], link_counts: dict[str, int]
+) -> SourceSummary:
+    return SourceSummary(
+        id=source.id,
+        project_id=source.project_id,
+        kind=SourceKind(source.kind),
+        title=source.title,
+        provider=source.provider,
+        canonical_key=source.canonical_key,
+        created_by_user_id=source.created_by_user_id,
+        created_at=source.created_at,
+        updated_at=source.updated_at,
+        snapshot_count=snapshot_counts.get(source.id, 0),
+        linked_pad_count=link_counts.get(source.id, 0),
+    )
+
+
+@app.post(
+    f"{settings.api_prefix}/projects/{{project_id}}/sources",
+    response_model=SourceCreateResponse,
+)
+def sources_create(
+    project_id: str,
+    payload: SourceCreateRequest,
+    user: CurrentUser,
+):
+    with session_factory() as session:
+        _require_project_member_or_403(session, project_id, user)
+        try:
+            source, snapshot, created = create_source(
+                session,
+                project_id=project_id,
+                kind=payload.kind,
+                created_by_user_id=user.id,
+                title=payload.title,
+                url=payload.url,
+                text=payload.text,
+                ref_pinned=payload.ref_pinned,
+                provenance=payload.provenance,
+            )
+        except SourceInputError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        snapshot_counts = count_snapshots_for_sources(session, [source.id])
+        link_counts = count_pad_links_for_sources(session, [source.id])
+        return SourceCreateResponse(
+            source=_source_summary(
+                source, snapshot_counts=snapshot_counts, link_counts=link_counts
+            ),
+            snapshot_id=snapshot.id,
+            created=created,
+        )
+
+
+@app.get(
+    f"{settings.api_prefix}/projects/{{project_id}}/sources",
+    response_model=list[SourceSummary],
+)
+def sources_list(project_id: str, user: CurrentUser):
+    with session_factory() as session:
+        _require_project_member_or_403(session, project_id, user)
+        sources = list_sources_in_project(session, project_id)
+        ids = [s.id for s in sources]
+        snapshot_counts = count_snapshots_for_sources(session, ids)
+        link_counts = count_pad_links_for_sources(session, ids)
+        return [
+            _source_summary(
+                source, snapshot_counts=snapshot_counts, link_counts=link_counts
+            )
+            for source in sources
+        ]
+
+
+@app.get(f"{settings.api_prefix}/sources/{{source_id}}", response_model=SourceDetail)
+def sources_detail(source_id: str, user: CurrentUser):
+    with session_factory() as session:
+        result = get_source_with_snapshots(session, source_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        source, snapshots = result
+        # Membership check — a source is visible iff the caller is in the
+        # project it's scoped to.
+        _require_project_member_or_403(session, source.project_id, user)
+
+        snapshot_counts = count_snapshots_for_sources(session, [source.id])
+        link_counts = count_pad_links_for_sources(session, [source.id])
+        base = _source_summary(
+            source, snapshot_counts=snapshot_counts, link_counts=link_counts
+        )
+        return SourceDetail(
+            **base.model_dump(),
+            provenance=source.provenance_json or {},
+            snapshots=[
+                SourceSnapshotRead(
+                    id=snap.id,
+                    snapshot_ref=snap.snapshot_ref,
+                    content_hash=snap.content_hash,
+                    content_text=snap.content_text,
+                    metadata=snap.metadata_json or {},
+                    created_at=snap.created_at,
+                )
+                for snap in snapshots
+            ],
+            linked_pad_ids=list_linked_pad_ids(session, source.id),
         )
 
 

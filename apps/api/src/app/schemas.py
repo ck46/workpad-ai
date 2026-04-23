@@ -361,3 +361,61 @@ class ScaffoldResponse(BaseModel):
     source_id: str | None
     outline_sections: list[str]
     detected_repo_urls: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Sources (Phase 3)
+# ---------------------------------------------------------------------------
+class SourceKind(StrEnum):
+    REPO = "repo"
+    TRANSCRIPT = "transcript"
+    NOTE = "note"
+    FILE = "file"
+    IMAGE = "image"
+
+
+class SourceCreateRequest(BaseModel):
+    # ``file`` and ``image`` are intentionally not accepted here yet —
+    # they need the Stream B upload pipeline. The handler rejects them
+    # with a 400 until that lands.
+    kind: Literal["repo", "transcript", "note"]
+    title: str | None = Field(default=None, max_length=500)
+    url: str | None = Field(default=None, max_length=2_000)
+    text: str | None = Field(default=None, max_length=500_000)
+    ref_pinned: str | None = Field(default=None, max_length=128)
+    provenance: dict | None = None
+
+
+class SourceSnapshotRead(BaseModel):
+    id: str
+    snapshot_ref: str
+    content_hash: str
+    content_text: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class SourceSummary(BaseModel):
+    id: str
+    project_id: str
+    kind: SourceKind
+    title: str
+    provider: str
+    canonical_key: str | None = None
+    created_by_user_id: str
+    created_at: datetime
+    updated_at: datetime
+    snapshot_count: int = 0
+    linked_pad_count: int = 0
+
+
+class SourceDetail(SourceSummary):
+    provenance: dict = Field(default_factory=dict)
+    snapshots: list[SourceSnapshotRead] = []
+    linked_pad_ids: list[str] = []
+
+
+class SourceCreateResponse(BaseModel):
+    source: SourceSummary
+    snapshot_id: str
+    created: bool  # False when an existing source was returned (dedupe hit)

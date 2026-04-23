@@ -323,3 +323,204 @@ def backfill_spec_sources(session: Session) -> dict[str, int]:
         "links": links_created,
         "skipped": skipped,
     }
+
+
+# ---------------------------------------------------------------------------
+# Source domain helpers (used by the HTTP endpoints in ``main.py``).
+# ---------------------------------------------------------------------------
+class SourceInputError(Exception):
+    """Raised when a create-source payload can't be mapped to a Source."""
+
+
+def create_source(
+    session: Session,
+    *,
+    project_id: str,
+    kind: str,
+    created_by_user_id: str,
+    title: str | None = None,
+    url: str | None = None,
+    text: str | None = None,
+    ref_pinned: str | None = None,
+    provenance: dict[str, Any] | None = None,
+) -> tuple[Source, SourceSnapshot, bool]:
+    """Create a ``Source`` + initial ``SourceSnapshot`` from a user input.
+
+    Supports the kinds that don't require the Stream-B upload pipeline:
+    ``repo`` (URL or bare slug), ``transcript`` (pasted text), and
+    ``note`` (pasted text). ``file`` and ``image`` raise
+    :class:`SourceInputError` until uploads land.
+
+    Repo + transcript Sources dedupe on ``(project_id, kind,
+    canonical_key)``; if a match exists the existing row is returned.
+    The bool in the result tuple is ``True`` when a new row was created,
+    ``False`` when an existing row was reused.
+
+    Notes never dedupe — same text, posted twice, is two notes.
+    """
+
+    if not valid_kind(kind):
+        raise SourceInputError(f"unknown kind: {kind}")
+    if kind in (KIND_FILE, KIND_IMAGE):
+        raise SourceInputError(
+            f"kind={kind!r} requires the upload pipeline, which ships later in Phase 3"
+        )
+
+    base_provenance = dict(provenance or {})
+
+    if kind == KIND_REPO:
+        slug = _extract_repo_slug(url or "")
+        if not slug:
+            raise SourceInputError("repo sources need a parseable github url or owner/name slug")
+        pinned = (ref_pinned or "").strip()
+        snapshot_ref = pinned or "unpinned"
+        content_hash = _hash_text(f"{slug}:{snapshot_ref}")
+        resolved_title = (title or slug).strip()[:500]
+        canonical_key = slug
+        content_text: str | None = None
+        provider = "github"
+        metadata = {"ref_pinned": pinned} if pinned else {}
+        provenance_json = {"url": url, **base_provenance} if url else base_provenance
+    elif kind == KIND_TRANSCRIPT:
+        body = (text or "").strip()
+        if not body:
+            raise SourceInputError("transcript sources need non-empty text")
+        content_hash = _hash_text(body)
+        snapshot_ref = content_hash
+        canonical_key = content_hash
+        content_text = body
+        provider = "paste"
+        resolved_title = (title or _summarize_transcript(body))[:500]
+        metadata = dict(base_provenance)
+        provenance_json = {"origin": "paste", **base_provenance}
+    elif kind == KIND_NOTE:
+        body = (text or "").strip()
+        if not body:
+            raise SourceInputError("note sources need non-empty text")
+        content_hash = _hash_text(body)
+        # Notes intentionally do not dedupe: two notes with identical
+        # text are two distinct records. Canonical key stays NULL.
+        snapshot_ref = content_hash
+        canonical_key = None
+        content_text = body
+        provider = "paste"
+        resolved_title = (title or _summarize_transcript(body))[:500]
+        metadata = dict(base_provenance)
+        provenance_json = {"origin": "paste", **base_provenance}
+    else:  # pragma: no cover — guarded above
+        raise SourceInputError(f"unsupported kind: {kind}")
+
+    existing: Source | None = None
+    if canonical_key is not None:
+        existing = session.scalar(
+            select(Source)
+            .where(Source.project_id == project_id)
+            .where(Source.kind == kind)
+            .where(Source.canonical_key == canonical_key)
+        )
+    if existing is not None:
+        snapshot = session.scalar(
+            select(SourceSnapshot)
+            .where(SourceSnapshot.source_id == existing.id)
+            .where(SourceSnapshot.snapshot_ref == snapshot_ref)
+        )
+        if snapshot is None:
+            snapshot = SourceSnapshot(
+                source_id=existing.id,
+                snapshot_ref=snapshot_ref,
+                content_text=content_text,
+                content_hash=content_hash,
+                metadata_json=metadata,
+            )
+            session.add(snapshot)
+            session.commit()
+            session.refresh(snapshot)
+        return existing, snapshot, False
+
+    source = Source(
+        project_id=project_id,
+        kind=kind,
+        title=resolved_title,
+        provider=provider,
+        canonical_key=canonical_key,
+        provenance_json=provenance_json,
+        created_by_user_id=created_by_user_id,
+    )
+    session.add(source)
+    session.flush()
+    snapshot = SourceSnapshot(
+        source_id=source.id,
+        snapshot_ref=snapshot_ref,
+        content_text=content_text,
+        content_hash=content_hash,
+        metadata_json=metadata,
+    )
+    session.add(snapshot)
+    session.commit()
+    session.refresh(source)
+    session.refresh(snapshot)
+    return source, snapshot, True
+
+
+def list_sources_in_project(session: Session, project_id: str) -> list[Source]:
+    return list(
+        session.scalars(
+            select(Source)
+            .where(Source.project_id == project_id)
+            .order_by(Source.updated_at.desc())
+        )
+    )
+
+
+def get_source_with_snapshots(
+    session: Session, source_id: str
+) -> tuple[Source, list[SourceSnapshot]] | None:
+    source = session.get(Source, source_id)
+    if source is None:
+        return None
+    snapshots = list(
+        session.scalars(
+            select(SourceSnapshot)
+            .where(SourceSnapshot.source_id == source_id)
+            .order_by(SourceSnapshot.created_at.asc())
+        )
+    )
+    return source, snapshots
+
+
+def count_snapshots_for_sources(session: Session, source_ids: list[str]) -> dict[str, int]:
+    """Return a ``{source_id: snapshot_count}`` map for list responses."""
+
+    if not source_ids:
+        return {}
+    from sqlalchemy import func
+
+    rows = session.execute(
+        select(SourceSnapshot.source_id, func.count(SourceSnapshot.id))
+        .where(SourceSnapshot.source_id.in_(source_ids))
+        .group_by(SourceSnapshot.source_id)
+    ).all()
+    return {row[0]: row[1] for row in rows}
+
+
+def count_pad_links_for_sources(session: Session, source_ids: list[str]) -> dict[str, int]:
+    if not source_ids:
+        return {}
+    from sqlalchemy import func
+
+    rows = session.execute(
+        select(PadSourceLink.source_id, func.count(PadSourceLink.id))
+        .where(PadSourceLink.source_id.in_(source_ids))
+        .group_by(PadSourceLink.source_id)
+    ).all()
+    return {row[0]: row[1] for row in rows}
+
+
+def list_linked_pad_ids(session: Session, source_id: str) -> list[str]:
+    return list(
+        session.scalars(
+            select(PadSourceLink.pad_id)
+            .where(PadSourceLink.source_id == source_id)
+            .order_by(PadSourceLink.created_at.asc())
+        )
+    )
