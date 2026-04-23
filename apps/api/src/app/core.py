@@ -205,6 +205,7 @@ def init_db() -> None:
     from . import projects as _projects  # noqa: F401
     from . import sources as _sources  # noqa: F401
     from .projects import backfill_personal_projects
+    from .sources import backfill_spec_sources
 
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
@@ -217,6 +218,9 @@ def init_db() -> None:
     factory = get_session_factory()
     with factory() as session:
         backfill_personal_projects(session)
+        # Run after personal-project backfill so every Artifact has a
+        # project_id before the SpecSource rows are promoted.
+        backfill_spec_sources(session)
 
 
 def _ensure_conversation_schema(engine) -> None:
